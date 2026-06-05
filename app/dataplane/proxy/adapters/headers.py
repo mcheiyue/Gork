@@ -12,8 +12,8 @@ from typing import Optional
 from urllib.parse import urlparse
 
 
-from app.platform.logging.logger import logger
 from app.platform.config.snapshot import get_config
+from app.platform.logging.logger import logger
 from app.control.proxy.models import ProxyLease
 from app.dataplane.proxy.adapters.profile import ProxyProfile, resolve_proxy_profile
 
@@ -76,6 +76,9 @@ def _statsig_id() -> str:
     The server accepts this fallback.  We reproduce the exact format with
     varied error messages to avoid a static fingerprint.
     """
+    cfg = get_config()
+    if cfg is not None and not cfg.get_bool("features.dynamic_statsig", True):
+        return str(uuid.uuid4())
     if random.choice((True, False)):
         rand = "".join(random.choices(string.ascii_lowercase + string.digits, k=5))
         msg = f"x1:TypeError: Cannot read properties of null (reading 'children[\\'{rand}\\']')"

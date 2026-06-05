@@ -61,6 +61,7 @@ class ListAccountsQuery(BaseModel):
     pool:            str | None     = None
     status:          AccountStatus | None = None
     tags:            list[str]      = Field(default_factory=list)
+    exclude_tags:    list[str]      = Field(default_factory=list)
     include_deleted: bool           = False
     sort_by:         str            = "updated_at"   # field name
     sort_desc:       bool           = True

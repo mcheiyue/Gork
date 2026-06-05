@@ -5,6 +5,8 @@ Layout:
   accounts:record:<token>      — HASH    flattened AccountRecord fields
   accounts:pool:<pool>         — SET     token members per pool (live)
   accounts:revision_log        — ZSET    token → revision (for scan_changes)
+  accounts:index:*             — SET     secondary indexes for listing
+  accounts:sort:<field>        — ZSET    common sort indexes
 """
 
 import json
@@ -28,6 +30,25 @@ _KEY_REV      = "accounts:rev"
 _KEY_RECORD   = "accounts:record:{token}"
 _KEY_POOL     = "accounts:pool:{pool}"
 _KEY_REV_LOG  = "accounts:revision_log"
+_KEY_INDEX_READY = "accounts:index:ready"
+_KEY_INDEX_ALL = "accounts:index:all"
+_KEY_INDEX_LIVE = "accounts:index:live"
+_KEY_INDEX_DELETED = "accounts:index:deleted"
+_KEY_INDEX_POOL = "accounts:index:pool:{pool}"
+_KEY_INDEX_STATUS = "accounts:index:status:{status}"
+_KEY_INDEX_TAG = "accounts:index:tag:{tag}"
+_KEY_SORT = "accounts:sort:{field}"
+_SORT_FIELDS = {
+    "created_at",
+    "updated_at",
+    "last_use_at",
+    "last_fail_at",
+    "last_sync_at",
+    "last_clear_at",
+    "usage_use_count",
+    "usage_fail_count",
+    "usage_sync_count",
+}
 
 
 def _record_key(token: str) -> str:
@@ -36,6 +57,26 @@ def _record_key(token: str) -> str:
 
 def _pool_key(pool: str) -> str:
     return f"accounts:pool:{pool}"
+
+
+def _index_pool_key(pool: str) -> str:
+    return f"accounts:index:pool:{pool}"
+
+
+def _index_status_key(status: str) -> str:
+    return f"accounts:index:status:{status}"
+
+
+def _index_tag_key(tag: str) -> str:
+    return f"accounts:index:tag:{tag}"
+
+
+def _sort_key(field: str) -> str:
+    return f"accounts:sort:{field}"
+
+
+def _decode_member(value: bytes | str) -> str:
+    return value.decode() if isinstance(value, bytes) else value
 
 
 class RedisAccountRepository:
@@ -129,7 +170,11 @@ class RedisAccountRepository:
     # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        await self._r.setnx(_KEY_REV, "0")
+        created = await self._r.setnx(_KEY_REV, "0")
+        if created:
+            await self._r.setnx(_KEY_INDEX_READY, "1")
+        elif not await self._indexes_ready():
+            await self.rebuild_indexes()
 
     async def get_revision(self) -> int:
         v = await self._r.get(_KEY_REV)
@@ -217,8 +262,11 @@ class RedisAccountRepository:
                 updated_at = ts,
             )
             key = _record_key(token)
+            old = await self._r.hgetall(key)
+            if old:
+                await self._remove_record_indexes(self._from_hash(token, old))
             await self._r.hset(key, mapping=self._to_hash(record, rev))
-            await self._r.sadd(_pool_key(pool), token)
+            await self._add_record_indexes(record)
             await self._r.zadd(_KEY_REV_LOG, {token: rev})
             count += 1
         return AccountMutationResult(upserted=count, revision=rev)
@@ -238,6 +286,7 @@ class RedisAccountRepository:
             if not h:
                 continue
             record = self._from_hash(patch.token, h)
+            await self._remove_record_indexes(record)
             qs = record.quota_set()
 
             updates: dict[str, str] = {
@@ -306,6 +355,9 @@ class RedisAccountRepository:
             updates["ext"] = json.dumps(ext)
 
             await self._r.hset(key, mapping=updates)
+            updated = await self._r.hgetall(key)
+            if updated:
+                await self._add_record_indexes(self._from_hash(patch.token, updated))
             await self._r.zadd(_KEY_REV_LOG, {patch.token: rev})
             count += 1
         return AccountMutationResult(patched=count, revision=rev)
@@ -327,15 +379,18 @@ class RedisAccountRepository:
             h = await self._r.hgetall(key)
             if not h:
                 continue
-            pool = (h.get(b"pool") or h.get("pool") or b"basic")
-            if isinstance(pool, bytes):
-                pool = pool.decode()
+            record = self._from_hash(token, h)
+            await self._remove_record_indexes(record)
             await self._r.hset(key, mapping={
                 "deleted_at": str(ts),
                 "updated_at": str(ts),
                 "revision":   str(rev),
             })
-            await self._r.srem(_pool_key(pool), token)
+            await self._add_record_indexes(record.model_copy(update={
+                "deleted_at": ts,
+                "updated_at": ts,
+                "revision": rev,
+            }))
             await self._r.zadd(_KEY_REV_LOG, {token: rev})
             count += 1
         return AccountMutationResult(deleted=count, revision=rev)
@@ -355,10 +410,18 @@ class RedisAccountRepository:
         self,
         query: ListAccountsQuery,
     ) -> AccountPage:
+        if await self._indexes_ready():
+            return await self._list_accounts_indexed(query)
+        return await self._list_accounts_scan(query)
+
+    async def _list_accounts_scan(
+        self,
+        query: ListAccountsQuery,
+    ) -> AccountPage:
         # Full scan — Redis is not optimised for filtered listing.
         all_records: list[AccountRecord] = []
         async for key in self._r.scan_iter("accounts:record:*"):
-            token = (key.decode() if isinstance(key, bytes) else key).split(":", 2)[-1]
+            token = _decode_member(key).split(":", 2)[-1]
             h = await self._r.hgetall(key)
             if not h:
                 continue
@@ -368,6 +431,10 @@ class RedisAccountRepository:
             if query.pool and r.pool != query.pool:
                 continue
             if query.status and r.status != query.status:
+                continue
+            if query.tags and not all(tag in r.tags for tag in query.tags):
+                continue
+            if query.exclude_tags and any(tag in r.tags for tag in query.exclude_tags):
                 continue
             all_records.append(r)
 
@@ -390,6 +457,102 @@ class RedisAccountRepository:
             total_pages=total_pages,
             revision=rev,
         )
+
+    async def _list_accounts_indexed(
+        self,
+        query: ListAccountsQuery,
+    ) -> AccountPage:
+        candidates = await self._candidate_tokens(query)
+        records = await self.get_accounts(sorted(candidates))
+        records = [record for record in records if self._matches_query(record, query)]
+        sort_key = query.sort_by
+        records.sort(
+            key=lambda r: getattr(r, sort_key, 0) or 0,
+            reverse=query.sort_desc,
+        )
+        total = len(records)
+        start = (query.page - 1) * query.page_size
+        items = records[start : start + query.page_size]
+        return AccountPage(
+            items=items,
+            total=total,
+            page=query.page,
+            page_size=query.page_size,
+            total_pages=max(1, (total + query.page_size - 1) // query.page_size),
+            revision=await self.get_revision(),
+        )
+
+    async def _indexes_ready(self) -> bool:
+        return bool(await self._r.get(_KEY_INDEX_READY))
+
+    async def rebuild_indexes(self) -> None:
+        """Build secondary indexes from existing account record hashes."""
+        async for key in self._r.scan_iter("accounts:record:*"):
+            token = _decode_member(key).split(":", 2)[-1]
+            h = await self._r.hgetall(key)
+            if h:
+                await self._add_record_indexes(self._from_hash(token, h))
+        await self._r.setnx(_KEY_INDEX_READY, "1")
+
+    async def _set_members(self, key: str) -> set[str]:
+        return {_decode_member(item) for item in await self._r.smembers(key)}
+
+    async def _candidate_tokens(self, query: ListAccountsQuery) -> set[str]:
+        candidates = await self._set_members(
+            _KEY_INDEX_ALL if query.include_deleted else _KEY_INDEX_LIVE
+        )
+        if query.pool:
+            candidates &= await self._set_members(_index_pool_key(query.pool))
+        if query.status:
+            candidates &= await self._set_members(_index_status_key(query.status.value))
+        for tag in query.tags:
+            candidates &= await self._set_members(_index_tag_key(tag))
+        for tag in query.exclude_tags:
+            candidates -= await self._set_members(_index_tag_key(tag))
+        return candidates
+
+    @staticmethod
+    def _matches_query(record: AccountRecord, query: ListAccountsQuery) -> bool:
+        if not query.include_deleted and record.is_deleted():
+            return False
+        if query.pool and record.pool != query.pool:
+            return False
+        if query.status and record.status != query.status:
+            return False
+        if query.tags and not all(tag in record.tags for tag in query.tags):
+            return False
+        if query.exclude_tags and any(tag in record.tags for tag in query.exclude_tags):
+            return False
+        return True
+
+    async def _remove_record_indexes(self, record: AccountRecord) -> None:
+        token = record.token
+        await self._r.srem(_KEY_INDEX_ALL, token)
+        await self._r.srem(_KEY_INDEX_LIVE, token)
+        await self._r.srem(_KEY_INDEX_DELETED, token)
+        await self._r.srem(_pool_key(record.pool), token)
+        await self._r.srem(_index_pool_key(record.pool), token)
+        await self._r.srem(_index_status_key(record.status.value), token)
+        for tag in record.tags:
+            await self._r.srem(_index_tag_key(tag), token)
+        for field in _SORT_FIELDS:
+            await self._r.zrem(_sort_key(field), token)
+
+    async def _add_record_indexes(self, record: AccountRecord) -> None:
+        token = record.token
+        await self._r.setnx(_KEY_INDEX_READY, "1")
+        await self._r.sadd(_KEY_INDEX_ALL, token)
+        await self._r.sadd(_index_pool_key(record.pool), token)
+        await self._r.sadd(_index_status_key(record.status.value), token)
+        if record.is_deleted():
+            await self._r.sadd(_KEY_INDEX_DELETED, token)
+        else:
+            await self._r.sadd(_KEY_INDEX_LIVE, token)
+            await self._r.sadd(_pool_key(record.pool), token)
+        for tag in record.tags:
+            await self._r.sadd(_index_tag_key(tag), token)
+        for field in _SORT_FIELDS:
+            await self._r.zadd(_sort_key(field), {token: getattr(record, field, 0) or 0})
 
     async def replace_pool(
         self,

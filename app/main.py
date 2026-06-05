@@ -42,6 +42,8 @@ load_dotenv()
 
 _LOCK_FILE = data_path(".scheduler.lock")
 _lock_fd: int | None = None
+_redis_scheduler_lease = None
+_redis_scheduler_renew_task: asyncio.Task | None = None
 
 
 def _try_acquire_scheduler_lock() -> bool:
@@ -81,6 +83,57 @@ def _release_scheduler_lock() -> None:
     _lock_fd = None
 
 
+async def _renew_scheduler_lease(lease) -> None:
+    interval = max(1.0, lease.ttl_ms / 2000)
+    while True:
+        await asyncio.sleep(interval)
+        if not await lease.renew():
+            return
+
+
+async def _try_acquire_scheduler_leader(runtime_store) -> bool:
+    """Use Redis leader election when available, otherwise fall back to file lock."""
+    global _redis_scheduler_lease, _redis_scheduler_renew_task
+    if runtime_store is None:
+        return _try_acquire_scheduler_lock()
+
+    ttl_ms = max(1_000, int(os.getenv("RUNTIME_REDIS_LOCK_TTL_MS", "300000")))
+    try:
+        lease = await runtime_store.acquire_lock(
+            "scheduler-leader",
+            ttl_ms=ttl_ms,
+        )
+    except Exception as exc:
+        logger.warning("redis scheduler lock unavailable, falling back to file lock: {}", exc)
+        return _try_acquire_scheduler_lock()
+
+    if lease is None:
+        return False
+
+    _redis_scheduler_lease = lease
+    _redis_scheduler_renew_task = asyncio.create_task(
+        _renew_scheduler_lease(lease),
+        name="redis-scheduler-lock-renew",
+    )
+    return True
+
+
+async def _release_scheduler_leader() -> None:
+    global _redis_scheduler_lease, _redis_scheduler_renew_task
+    if _redis_scheduler_renew_task is not None:
+        _redis_scheduler_renew_task.cancel()
+        try:
+            await _redis_scheduler_renew_task
+        except asyncio.CancelledError:
+            pass
+        _redis_scheduler_renew_task = None
+    if _redis_scheduler_lease is not None:
+        await _redis_scheduler_lease.release()
+        _redis_scheduler_lease = None
+        return
+    _release_scheduler_lock()
+
+
 # ---------------------------------------------------------------------------
 # Early logging setup (before config is loaded)
 # ---------------------------------------------------------------------------
@@ -111,6 +164,18 @@ async def lifespan(app: FastAPI):
         sys.version.split()[0],
         platform.system(),
     )
+
+    from app.platform.runtime.redis_runtime import create_runtime_store_from_env
+    from app.platform.runtime.task import RedisTaskSnapshotStore, set_task_snapshot_store
+
+    runtime_store = create_runtime_store_from_env()
+    app.state.runtime_store = runtime_store
+    if runtime_store is not None:
+        ttl_s = max(60, int(os.getenv("RUNTIME_TASK_TTL_S", "300")))
+        set_task_snapshot_store(RedisTaskSnapshotStore(runtime_store.redis, ttl_s=ttl_s))
+        logger.info("redis runtime layer enabled")
+    else:
+        set_task_snapshot_store(None)
 
     # 2. Initialise account repository and bootstrap runtime table.
     from app.control.account.backends.factory import (
@@ -202,7 +267,7 @@ async def lifespan(app: FastAPI):
     set_refresh_service(refresh_svc)
     app.state.refresh_service = refresh_svc
 
-    is_leader = _try_acquire_scheduler_lock()
+    is_leader = await _try_acquire_scheduler_leader(runtime_store)
     scheduler = get_account_refresh_scheduler(refresh_svc)
     set_refresh_scheduler(scheduler)
     set_refresh_scheduler_leader(is_leader)
@@ -259,11 +324,14 @@ async def lifespan(app: FastAPI):
     if is_leader:
         scheduler.stop()
         proxy_scheduler.stop()
-        _release_scheduler_lock()
+        await _release_scheduler_leader()
 
     set_refresh_scheduler(None)
     set_refresh_scheduler_leader(False)
     set_refresh_service(None)
+    set_task_snapshot_store(None)
+    if runtime_store is not None:
+        await runtime_store.close()
     await repo.close()
     logger.info("application shutdown completed")
 

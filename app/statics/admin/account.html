@@ -1098,6 +1098,8 @@ const PAGE_SIZE_KEY = 'admin.account.page_size';
 const PAGE_SIZE_OPTIONS = [50, 100, 200, 500, 1000, 2000];
 
 let allTokens = [], curStatus = 'all', curNsfw = 'all', curPool = 'all', curPage = 1, pageSize = loadSavedPageSize();
+let pageMeta = { total: 0, page: 1, page_size: pageSize, total_pages: 1 };
+let serverFacets = null;
 const sel = new Set();
 const refreshingTokens = new Set();
 let _cb = null;
@@ -1167,10 +1169,11 @@ function waitI18n() {
 // ── API ────────────────────────────────────────────────────────────────────
 async function _api(method, path, body) {
   const key = await adminKey.get();
+  const isForm = body instanceof FormData;
   const r = await fetch(ADMIN_API + path, {
     method,
-    headers: { ...(body != null && { 'Content-Type': 'application/json' }), Authorization: `Bearer ${key}` },
-    ...(body != null && { body: JSON.stringify(body) }),
+    headers: { ...(body != null && !isForm && { 'Content-Type': 'application/json' }), Authorization: `Bearer ${key}` },
+    ...(body != null && { body: isForm ? body : JSON.stringify(body) }),
   });
   if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || r.status); }
   return r.json();
@@ -1181,10 +1184,24 @@ async function _api(method, path, body) {
 let selectionStrategy = 'quota';
 
 // ── Load ───────────────────────────────────────────────────────────────────
+function buildTokenQuery({ page = curPage, size = pageSize } = {}) {
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(size),
+    sort_by: 'updated_at',
+    sort_desc: 'true',
+  });
+  if (curPool !== 'all') params.set('pool', curPool);
+  if (curStatus !== 'all') params.set('status', curStatus);
+  if (curNsfw !== 'all') params.set('nsfw', curNsfw);
+  return params;
+}
+
 async function load() {
   try {
+    const params = buildTokenQuery();
     const [data, status] = await Promise.all([
-      _api('GET', '/tokens'),
+      _api('GET', `/tokens?${params}`),
       _api('GET', '/status').catch(() => null),
     ]);
     if (status && typeof status.selection_strategy === 'string') {
@@ -1194,6 +1211,13 @@ async function load() {
       ? data.tokens
       : Object.entries(data.tokens || {}).flatMap(([pool, items]) =>
           Array.isArray(items) ? items.map(t => ({ ...t, pool: t.pool || pool })) : []);
+    pageMeta = data.pagination || { total: allTokens.length, page: curPage, page_size: pageSize, total_pages: 1 };
+    curPage = pageMeta.page || curPage;
+    serverFacets = data.facets || null;
+    if (pageMeta.total > 0 && curPage > pageMeta.total_pages) {
+      curPage = pageMeta.total_pages;
+      return load();
+    }
     applyStrategyUI();
     invalidateTokenView();
     render();
@@ -1225,25 +1249,14 @@ function getTokenView() {
   const cacheKey = `${_tokenViewVersion}|${curStatus}|${curNsfw}|${curPool}`;
   if (_tokenViewCache && _tokenViewCacheKey === cacheKey) return _tokenViewCache;
 
-  const stats = {
-    active: 0,
-    cooling: 0,
-    invalid: 0,
-    disabled: 0,
-    calls: 0,
-    success: 0,
-    fail: 0,
-    qa: 0,
-    qf: 0,
-    qe: 0,
-    qh: 0,
-    qc: 0,
+  const fallbackStats = {
+    active: 0, cooling: 0, invalid: 0, disabled: 0,
+    calls: 0, success: 0, fail: 0, qa: 0, qf: 0, qe: 0, qh: 0, qc: 0,
   };
-  const statusCounts = { all: 0, active: 0, cooling: 0, invalid: 0, disabled: 0 };
-  const nsfwCounts = { all: 0, enabled: 0, disabled: 0 };
-  const poolCounts = new Map([['all', 0]]);
+  const fallbackStatusCounts = { all: 0, active: 0, cooling: 0, invalid: 0, disabled: 0 };
+  const fallbackNsfwCounts = { all: 0, enabled: 0, disabled: 0 };
+  const fallbackPoolCounts = new Map([['all', 0]]);
   const poolsSet = new Set(['basic', 'super', 'heavy']);
-  const filteredItems = [];
 
   for (const token of allTokens) {
     const pool = token.pool || 'basic';
@@ -1251,48 +1264,29 @@ function getTokenView() {
     const nsfwEnabled = (token.tags || []).includes('nsfw');
     const invalid = isInvalidStatus(token.status);
     const disabled = isDisabledStatus(token.status);
-    const matchesPool = curPool === 'all' || pool === curPool;
-    const matchesStatus = curStatus === 'all'
-      || (curStatus === 'invalid' ? invalid : curStatus === 'disabled' ? disabled : token.status === curStatus);
-    const matchesNsfw = curNsfw === 'all' || (curNsfw === 'enabled' ? nsfwEnabled : !nsfwEnabled);
 
     poolsSet.add(pool);
     const successCount = token.use_count || 0;
     const failCount = token.fail_count || 0;
-    stats.success += successCount;
-    stats.fail += failCount;
-    stats.calls += successCount + failCount;
-    stats.qa += quota.auto?.remaining || 0;
-    stats.qf += quota.fast?.remaining || 0;
-    stats.qe += quota.expert?.remaining || 0;
-    stats.qh += quota.heavy?.remaining || 0;
-    stats.qc += quota.console?.remaining || 0;
+    fallbackStats.success += successCount;
+    fallbackStats.fail += failCount;
+    fallbackStats.calls += successCount + failCount;
+    fallbackStats.qa += quota.auto?.remaining || 0;
+    fallbackStats.qf += quota.fast?.remaining || 0;
+    fallbackStats.qe += quota.expert?.remaining || 0;
+    fallbackStats.qh += quota.heavy?.remaining || 0;
+    fallbackStats.qc += quota.console?.remaining || 0;
 
-    if (token.status === 'active') stats.active += 1;
-    if (token.status === 'cooling') stats.cooling += 1;
-    if (invalid) stats.invalid += 1;
-    if (disabled) stats.disabled += 1;
-
-    if (matchesPool && matchesNsfw) {
-      statusCounts.all += 1;
-      if (token.status === 'active') statusCounts.active += 1;
-      if (token.status === 'cooling') statusCounts.cooling += 1;
-      if (invalid) statusCounts.invalid += 1;
-      if (disabled) statusCounts.disabled += 1;
-    }
-
-    if (matchesPool && matchesStatus) {
-      nsfwCounts.all += 1;
-      if (nsfwEnabled) nsfwCounts.enabled += 1;
-      else nsfwCounts.disabled += 1;
-    }
-
-    if (matchesStatus && matchesNsfw) {
-      poolCounts.set('all', poolCounts.get('all') + 1);
-      poolCounts.set(pool, (poolCounts.get(pool) || 0) + 1);
-    }
-
-    if (matchesPool && matchesStatus && matchesNsfw) filteredItems.push(token);
+    fallbackStatusCounts.all += 1;
+    fallbackNsfwCounts.all += 1;
+    fallbackPoolCounts.set('all', fallbackPoolCounts.get('all') + 1);
+    fallbackPoolCounts.set(pool, (fallbackPoolCounts.get(pool) || 0) + 1);
+    if (token.status === 'active') { fallbackStats.active += 1; fallbackStatusCounts.active += 1; }
+    if (token.status === 'cooling') { fallbackStats.cooling += 1; fallbackStatusCounts.cooling += 1; }
+    if (invalid) { fallbackStats.invalid += 1; fallbackStatusCounts.invalid += 1; }
+    if (disabled) { fallbackStats.disabled += 1; fallbackStatusCounts.disabled += 1; }
+    if (nsfwEnabled) fallbackNsfwCounts.enabled += 1;
+    else fallbackNsfwCounts.disabled += 1;
   }
 
   if (curPool !== 'all' && !poolsSet.has(curPool)) {
@@ -1300,14 +1294,16 @@ function getTokenView() {
     return getTokenView();
   }
 
+  const pools = serverFacets?.pools || Object.fromEntries(fallbackPoolCounts);
+  Object.keys(pools).forEach(pool => { if (pool !== 'all') poolsSet.add(pool); });
   _tokenViewCacheKey = `${_tokenViewVersion}|${curStatus}|${curNsfw}|${curPool}`;
   _tokenViewCache = {
-    stats,
-    statusCounts,
-    nsfwCounts,
-    poolCounts,
+    stats: serverFacets?.stats || fallbackStats,
+    statusCounts: serverFacets?.status || fallbackStatusCounts,
+    nsfwCounts: serverFacets?.nsfw || fallbackNsfwCounts,
+    poolCounts: new Map(Object.entries(pools)),
     pools: Array.from(poolsSet),
-    filteredItems,
+    filteredItems: allTokens,
   };
   return _tokenViewCache;
 }
@@ -1326,7 +1322,7 @@ function isInvalidStatus(status) {
 
 function renderStats(view = getTokenView()) {
   const { stats } = view;
-  $('s-total',   allTokens.length);
+  $('s-total',   serverFacets?.status?.all ?? (pageMeta.total || stats.active + stats.cooling + stats.invalid + stats.disabled));
   $('s-active',  stats.active);
   $('s-cooling', stats.cooling);
   $('s-invalid', stats.invalid);
@@ -1448,10 +1444,9 @@ function preserveScroll(fn) {
 
 function renderTable(view = getTokenView()) {
   const items = view.filteredItems;
-  const total = items.length;
-  const pages = Math.max(1, Math.ceil(total / pageSize));
-  if (curPage > pages) curPage = pages;
-  const slice = items.slice((curPage - 1) * pageSize, curPage * pageSize);
+  const total = pageMeta.total ?? items.length;
+  const pages = Math.max(1, pageMeta.total_pages || Math.ceil(total / pageSize));
+  const slice = items;
 
   document.getElementById('tbody').innerHTML = slice.length
     ? slice.map(rowHtml).join('')
@@ -1547,7 +1542,7 @@ function switchStatus(status) {
     curPage = 1;
     sel.clear();
     renderFilters();
-    renderTable();
+    load();
   });
 }
 function switchNsfw(mode) {
@@ -1556,7 +1551,7 @@ function switchNsfw(mode) {
     curPage = 1;
     sel.clear();
     renderFilters();
-    renderTable();
+    load();
   });
 }
 function switchPool(pool) {
@@ -1565,30 +1560,30 @@ function switchPool(pool) {
     curPage = 1;
     sel.clear();
     renderFilters();
-    renderTable();
+    load();
   });
 }
-function prevPage() { if (curPage > 1) { curPage--; renderTable(); } }
+function prevPage() { if (curPage > 1) { curPage--; load(); } }
 function nextPage() {
-  const pages = Math.max(1, Math.ceil(getTokenView().filteredItems.length / pageSize));
-  if (curPage < pages) { curPage++; renderTable(); }
+  const pages = Math.max(1, pageMeta.total_pages || 1);
+  if (curPage < pages) { curPage++; load(); }
 }
 function changePageSize(v) {
   const next = Number(v);
   pageSize = PAGE_SIZE_OPTIONS.includes(next) ? next : 50;
   localStorage.setItem(PAGE_SIZE_KEY, String(pageSize));
   curPage = 1;
-  renderTable();
+  load();
 }
 
 function toggleAll(checked) {
-  getTokenView().filteredItems.slice((curPage-1)*pageSize, curPage*pageSize).forEach(t => checked ? sel.add(t.token) : sel.delete(t.token));
+  getTokenView().filteredItems.forEach(t => checked ? sel.add(t.token) : sel.delete(t.token));
   document.querySelectorAll('.row-cb').forEach(el => el.checked = checked);
   updateBatchBtns();
 }
 function toggleRow(el) {
   el.checked ? sel.add(el.dataset.token) : sel.delete(el.dataset.token);
-  const page = getTokenView().filteredItems.slice((curPage-1)*pageSize, curPage*pageSize);
+  const page = getTokenView().filteredItems;
   const cbAll = document.getElementById('cb-all');
   cbAll.checked = page.every(t => sel.has(t.token));
   cbAll.indeterminate = !cbAll.checked && sel.size > 0;
@@ -1697,37 +1692,17 @@ async function doImport() {
   const file = document.getElementById('import-file').files?.[0];
   if (!file) return showToast(tr('account.selectFile', null, '请选择文件'), 'error');
   const isJson = file.name.toLowerCase().endsWith('.json');
-  let raw = '';
-  try { raw = await file.text(); } catch { return showToast(tr('account.readFileFailed', null, '读取文件失败'), 'error'); }
-
-  if (isJson) {
-    let parsed;
-    try { parsed = JSON.parse(raw); } catch { return showToast(tr('account.jsonInvalid', null, 'JSON 格式错误'), 'error'); }
-    if (typeof parsed !== 'object' || Array.isArray(parsed)) return showToast(tr('account.jsonShapeInvalid', null, 'JSON 格式不正确，应为 {pool:[tokens]} 结构'), 'error');
-    let total = 0;
-    Object.values(parsed).forEach(arr => { if (Array.isArray(arr)) total += arr.length; });
-    if (!total) return showToast(tr('account.jsonEmpty', null, 'JSON 文件中没有可导入的 Token'), 'error');
-    try {
-      showToast(tr('account.importing', { n: total }, `正在导入 ${total} 个账户…`), 'info');
-      await _api('POST', '/tokens', parsed);
-      closeModal('modal-import-file');
-      showToast(tr('account.importJsonDone', { n: total }, `导入完成，共 ${total} 个`), 'success');
-      load();
-    } catch (e) { showToast(`${tr('account.importFailed', null, '导入失败')}: ${e.message}`, 'error'); }
-  } else {
-    // TXT 格式: 每行一个 token
-    const pool = document.getElementById('import-file-pool').value;
-    const newToks = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    if (!newToks.length) return showToast(tr('account.fileEmpty', null, '文件中没有可导入的 Token'), 'error');
-    return saveTokens(
-      pool,
-      newToks,
-      'modal-import-file',
-      tr('account.importing', { n: newToks.length }, `正在导入 ${newToks.length} 个账户…`),
-      tr('account.importDone', null, '导入完成'),
-      tr('account.importFailed', null, '导入失败'),
-    );
-  }
+  const form = new FormData();
+  form.append('file', file);
+  form.append('mode', isJson ? 'replace' : 'add');
+  if (!isJson) form.append('pool', document.getElementById('import-file-pool').value);
+  closeModal('modal-import-file');
+  return _runTask(
+    () => _api('POST', '/tokens/import-async', form),
+    tr('account.importingFile', null, '正在导入文件…'),
+    null,
+    0,
+  );
 }
 
 async function doEdit() {
@@ -1763,20 +1738,47 @@ function updateImportFileState() {
 async function saveTokens(pool, newToks, modalId, pendingMessage, successPrefix, errorPrefix) {
   const unique = [...new Set(newToks)];
   try {
-    showToast(pendingMessage, 'info');
-    const d = await _api('POST', '/tokens/add', { pool, tokens: unique });
+    const form = new FormData();
+    form.append('pool', pool);
+    form.append('mode', 'add');
+    form.append('tokens_text', unique.join('\n'));
     closeModal(modalId);
-    const msg = d.skipped
-      ? tr('account.saveResultSkipped', { prefix: successPrefix, count: d.count, skipped: d.skipped }, `${successPrefix}，新增 ${d.count}，已存在跳过 ${d.skipped}`)
-      : tr('account.saveResult', { prefix: successPrefix, count: d.count }, `${successPrefix}，新增 ${d.count} 个`);
-    showToast(msg, 'success');
-    load();
+    await _runTask(
+      () => _api('POST', '/tokens/import-async', form),
+      pendingMessage,
+      (_ok, _fail, summary) => {
+        const skipped = summary?.skipped ?? 0;
+        if (skipped) showToast(tr('account.saveResultSkipped', { prefix: successPrefix, count: summary.ok || 0, skipped }, `${successPrefix}，新增 ${summary.ok || 0}，已存在跳过 ${skipped}`), 'success');
+      },
+      unique.length,
+    );
   } catch (e) { showToast(`${errorPrefix}: ${e.message}`, 'error'); }
 }
 
 // ── Export ─────────────────────────────────────────────────────────────────
-function doExport() {
-  const tokens = filtered();
+async function fetchAllFilteredTokens() {
+  const out = [];
+  let page = 1;
+  while (true) {
+    const params = buildTokenQuery({ page, size: 2000 });
+    const data = await _api('GET', `/tokens?${params}`);
+    const items = Array.isArray(data.tokens) ? data.tokens : [];
+    out.push(...items);
+    const meta = data.pagination || {};
+    if (!items.length || page >= (meta.total_pages || 1)) break;
+    page += 1;
+  }
+  return out;
+}
+
+async function doExport() {
+  let tokens = [];
+  try {
+    showToast(tr('account.exportLoading', null, '正在准备导出…'), 'info');
+    tokens = await fetchAllFilteredTokens();
+  } catch (e) {
+    return showToast(`${tr('account.exportFailed', null, '导出失败')}: ${e.message}`, 'error');
+  }
   if (!tokens.length) return showToast(tr('account.exportEmpty', null, '当前没有可导出的 Token'), 'error');
   openModal('modal-export');
   document.getElementById('exp-count').textContent = tokens.length;
@@ -1825,7 +1827,7 @@ function batchDeleteSel() { if (sel.size) doDelete([...sel]); }
 let _batchTaskId = null;
 let _batchEs     = null;
 
-async function _runBatch(endpoint, tokens, label, onDone) {
+async function _runTask(starter, label, onDone, totalFallback = 0) {
   const btnCancel = document.getElementById('btn-batch-cancel');
   ['btn-nsfw','btn-refresh','btn-disable','btn-restore','btn-delete'].forEach(id =>
     document.getElementById(id).style.display = 'none');
@@ -1845,9 +1847,9 @@ async function _runBatch(endpoint, tokens, label, onDone) {
   }
 
   try {
-    const d = await _api('POST', `${endpoint}?async=true`, { tokens });
+    const d = await starter();
     _batchTaskId = d.task_id;
-    const total = d.total || tokens.length;
+    const total = d.total || totalFallback;
 
     const key = await adminKey.get();
     const es = new EventSource(`${ADMIN_API}/batch/${_batchTaskId}/stream?app_key=${encodeURIComponent(key)}`);
@@ -1864,7 +1866,7 @@ async function _runBatch(endpoint, tokens, label, onDone) {
           const s = ev.result?.summary || {};
           const ok = s.ok ?? 0, fail = s.fail ?? 0;
           progress.finish(`${label.replace('…','').replace('正在','')} 完成：成功 ${ok}，失败 ${fail}`, fail > 0 ? 'error' : 'success');
-          onDone(ok, fail);
+          onDone?.(ok, fail, s);
           load();
         } else if (ev.type === 'cancelled') {
           progress.finish('已取消', 'error');
@@ -1887,6 +1889,15 @@ async function _runBatch(endpoint, tokens, label, onDone) {
     _cleanup();
     progress.finish(`启动失败: ${e.message}`, 'error');
   }
+}
+
+async function _runBatch(endpoint, tokens, label, onDone) {
+  return _runTask(
+    () => _api('POST', `${endpoint}?async=true`, { tokens }),
+    label,
+    onDone,
+    tokens.length,
+  );
 }
 
 async function cancelBatch() {

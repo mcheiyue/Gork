@@ -459,6 +459,12 @@ class LocalAccountRepository:
                 if query.status:
                     where_parts.append("status = ?")
                     params.append(query.status.value)
+                for tag in query.tags:
+                    where_parts.append("tags LIKE ?")
+                    params.append(f'%"{tag}"%')
+                for tag in query.exclude_tags:
+                    where_parts.append("tags NOT LIKE ?")
+                    params.append(f'%"{tag}"%')
 
                 where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
                 order_dir = "DESC" if query.sort_desc else "ASC"
