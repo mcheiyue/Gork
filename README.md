@@ -21,6 +21,7 @@ Grok2API 是一个基于 **FastAPI** 构建的 Grok 网关，将 Grok Web 能力
 - 内置 Admin 后台管理、Web Chat、Masonry 生图、ChatKit 语音页面
 - 支持 `console.x.ai` 免费账号，新增 `*-console` 模型系列
 - 已修复 `grok.com` 路由常见 403 问题，内置 `x-statsig-id` 兼容修复，普通场景下无需额外浏览器签名服务
+- 接上文
 
 <br>
 
