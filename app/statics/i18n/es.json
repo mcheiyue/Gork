@@ -167,6 +167,7 @@
     "statFast": "Saldo Fast",
     "statExpert": "Saldo Expert",
     "statHeavy": "Saldo Heavy",
+    "statConsole": "Saldo Console",
     "filterStatusLabel": "Estado",
     "filterNsfwLabel": "NSFW",
     "filterTypeLabel": "Tipo",

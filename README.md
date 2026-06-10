@@ -1,7 +1,7 @@
 <img alt="Grok2API" src="https://github.com/user-attachments/assets/037a0a6e-7986-41cc-b4af-04df612ee886" />
 
-[![Python](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.119%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![OpenAI Compatible](https://img.shields.io/badge/API-OpenAI%20compatible-111827)](#api-%E7%AB%AF%E7%82%B9)
 [![License](https://img.shields.io/badge/license-MIT-16a34a)](LICENSE)
 [![Docker](https://img.shields.io/badge/ghcr.io-jiujiu532%2Fgrok2api-2496ED?logo=docker&logoColor=white)](https://github.com/jiujiu532/grok2api/pkgs/container/grok2api)
 
@@ -10,7 +10,7 @@
 
 <br>
 
-Grok2API 是一个基于 **FastAPI** 构建的 Grok 网关，将 Grok Web 能力以 OpenAI 兼容 API 的方式对外提供。核心特性：
+Grok2API 是一个基于 **Go** 构建的 Grok 网关，将 Grok Web 能力以 OpenAI 兼容 API 的方式对外提供。核心特性：
 
 - OpenAI 兼容接口：`/v1/models`、`/v1/chat/completions`、`/v1/responses`、`/v1/images/generations`、`/v1/images/edits`、`/v1/videos`、`/v1/videos/{video_id}`、`/v1/videos/{video_id}/content`
 - Anthropic 兼容接口：`/v1/messages`
@@ -133,14 +133,17 @@ docker run -d `
 
 ### 方式四：本地源码部署
 
-前置：Python 3.13+、[uv](https://docs.astral.sh/uv/getting-started/installation/)。
+前置：Go 1.25+。Python 3.13+ 与 `uv` 仅用于迁移期回归测试。
 
 ```bash
 git clone https://github.com/jiujiu532/grok2api
 cd grok2api/grok2api-main/grok2api-main
 cp .env.example .env
-uv sync
-uv run granian --interface asgi --host 0.0.0.0 --port 8000 --workers 1 app.main:app
+go run ./cmd/grok2api
+
+# 可选：构建本地二进制
+go build -o grok2api ./cmd/grok2api
+./grok2api
 ```
 
 ### 首次启动
@@ -298,7 +301,7 @@ server {
 | `ACCOUNT_SYNC_ACTIVE_INTERVAL` | 检测到变化后的活跃同步间隔（秒） | `3` |
 | `SERVER_HOST` | 监听地址 | `0.0.0.0` |
 | `SERVER_PORT` | 监听端口 | `8000` |
-| `SERVER_WORKERS` | Granian worker 数量 | `1` |
+| `SERVER_WORKERS` | 旧 Python/Granian worker 变量；Go 运行时当前不读取，保留为镜像兼容占位 | `1` |
 | `HOST_PORT` | Compose 宿主机映射端口 | `8000` |
 | `DATA_DIR` | 本地数据根目录 | `./data` |
 | `LOG_DIR` | 本地日志目录 | `./logs` |
@@ -508,7 +511,7 @@ curl http://localhost:8000/v1/videos \
 A: 是。当前版本已内置 `x-statsig-id` 兼容修复，普通场景下无需额外浏览器 sidecar。若仍遇到 403，更多是出口 IP、Cloudflare 风控或 clearance 失效导致，建议优先尝试防封版部署。
 
 **Q: 多 worker 部署？**
-`SERVER_WORKERS` 大于 1 时，账号刷新调度器会通过文件锁选举出唯一 leader，其他 worker 仅做轻量同步，安全可用。Windows 下建议保持单 worker。
+Go 版本当前是单进程 HTTP 服务，容器内不再通过 `SERVER_WORKERS` 启动多 worker。需要横向扩容时建议运行多个容器副本，并为账号存储、后台任务快照和运行时协调配置 Redis。
 
 <br>
 

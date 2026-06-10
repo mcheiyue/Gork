@@ -1,0 +1,4 @@
+interface:
+  display_name: "Port Python Upstream"
+  short_description: "Track and port Python upstream changes into the Go main branch."
+  default_prompt: "Use this skill to sync the python upstream mirror and port pending Python commits into the Go main branch."

@@ -1,8 +1,8 @@
 <img alt="Grok2API" src="https://github.com/user-attachments/assets/037a0a6e-7986-41cc-b4af-04df612ee886" />
 
-[![Python](https://img.shields.io/badge/python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.119%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Version](https://img.shields.io/badge/version-2.0.4.rc4-111827)](../grok2api-main/grok2api-main/pyproject.toml)
+[![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![OpenAI Compatible](https://img.shields.io/badge/API-OpenAI%20compatible-111827)](#api-endpoints)
+[![Version](https://img.shields.io/badge/version-2.0.4.rc4-111827)](../go.mod)
 [![License](https://img.shields.io/badge/license-MIT-16a34a)](../LICENSE)
 [![Docker](https://img.shields.io/badge/ghcr.io-jiujiu532%2Fgrok2api-2496ED?logo=docker&logoColor=white)](https://github.com/jiujiu532/grok2api/pkgs/container/grok2api)
 [![中文](https://img.shields.io/badge/%E4%B8%AD%E6%96%87-DC2626?logo=bookstack&logoColor=white)](../README.md)
@@ -12,7 +12,7 @@
 
 <br>
 
-Grok2API is a **FastAPI**-based Grok gateway that exposes Grok's web capabilities through OpenAI-compatible APIs. Highlights:
+Grok2API is a **Go**-based Grok gateway that exposes Grok's web capabilities through OpenAI-compatible APIs. Highlights:
 
 - OpenAI-compatible endpoints: `/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/images/generations`, `/v1/images/edits`, `/v1/videos`, `/v1/videos/{video_id}`, `/v1/videos/{video_id}/content`
 - Anthropic-compatible endpoint: `/v1/messages`
@@ -91,14 +91,17 @@ docker run -d `
 
 ### Option 3: From source
 
-Prerequisites: Python 3.13+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+Prerequisites: Go 1.25+. Python 3.13+ and `uv` are only needed for migration-period regression tests.
 
 ```bash
 git clone https://github.com/jiujiu532/grok2api
 cd grok2api/grok2api-main/grok2api-main
 cp .env.example .env
-uv sync
-uv run granian --interface asgi --host 0.0.0.0 --port 8000 --workers 1 app.main:app
+go run ./cmd/grok2api
+
+# Optional: build a local binary
+go build -o grok2api ./cmd/grok2api
+./grok2api
 ```
 
 ### First-time setup
@@ -217,7 +220,7 @@ Bootstrap-time variables (`.env` / Compose / `docker run -e`):
 | `ACCOUNT_SYNC_ACTIVE_INTERVAL` | Active sync interval after a change (s) | `3` |
 | `SERVER_HOST` | Listen host | `0.0.0.0` |
 | `SERVER_PORT` | Listen port | `8000` |
-| `SERVER_WORKERS` | Granian workers | `1` |
+| `SERVER_WORKERS` | Legacy Python/Granian worker variable; the Go runtime does not read it, kept as an image compatibility placeholder | `1` |
 | `HOST_PORT` | Compose host port mapping | `8000` |
 | `DATA_DIR` | Data root | `./data` |
 | `LOG_DIR` | Logs dir | `./logs` |
@@ -381,7 +384,7 @@ Check the port mapping with `docker compose ps` (expect `0.0.0.0:8000->8000/tcp`
 In Admin → Config → Proxy, switch `proxy.clearance.mode` to `manual` and provide matching `cf_cookies` + `user_agent`, or deploy FlareSolverr and switch to the `flaresolverr` mode.
 
 **Q: Multi-worker deployment.**
-When `SERVER_WORKERS > 1`, the account refresh scheduler elects a single leader via a file lock; other workers only run lightweight syncing. On Windows, single-worker mode is recommended.
+The Go version currently runs as a single-process HTTP service and no longer starts in-container workers through `SERVER_WORKERS`. For horizontal scaling, run multiple container replicas and configure Redis for account storage, task snapshots, and runtime coordination.
 
 <br>
 

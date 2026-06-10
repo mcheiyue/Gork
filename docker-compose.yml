@@ -3,13 +3,16 @@ services:
     container_name: grok2api
     image: ghcr.io/jiujiu532/grok2api:latest
     ports:
-      - "${HOST_PORT:-8000}:${SERVER_PORT:-8000}"
+      - "${HOST_PORT:-8000}:${PORT:-${SERVER_PORT:-8000}}"
     environment:
       TZ: Asia/Shanghai
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HOST: ${HOST:-${SERVER_HOST:-0.0.0.0}}
+      PORT: ${PORT:-${SERVER_PORT:-8000}}
       SERVER_HOST: ${SERVER_HOST:-0.0.0.0}
       SERVER_PORT: ${SERVER_PORT:-8000}
-      SERVER_WORKERS: ${SERVER_WORKERS:-1}
+      DATA_DIR: ${DATA_DIR:-/app/data}
+      LOG_DIR: ${LOG_DIR:-/app/logs}
       ACCOUNT_STORAGE: ${ACCOUNT_STORAGE:-local}
       ACCOUNT_LOCAL_PATH: ${ACCOUNT_LOCAL_PATH:-data/accounts.db}
       ACCOUNT_REDIS_URL: ${ACCOUNT_REDIS_URL:-}
@@ -32,6 +35,12 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://127.0.0.1:$${PORT:-8000}/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
     restart: unless-stopped
 
   redis:

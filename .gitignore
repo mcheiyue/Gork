@@ -53,3 +53,15 @@ htmlcov/
 
 # Project specific
 .ace-tool/
+.spec-workflow/
+.gocache/
+.uv-cache/
+.tmp/
+tmp/
+
+# Go build/test artifacts
+grok2api
+grok2api.exe
+*.test
+*.out
+*.prof

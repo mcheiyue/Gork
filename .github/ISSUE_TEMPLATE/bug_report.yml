@@ -30,6 +30,20 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: 运行环境
+      description: 选择触发问题的主要运行方式。
+      options:
+        - Go binary
+        - Docker / Docker Compose
+        - Docker Compose WARP / privoxy
+        - Source build / go run
+        - Other
+    validations:
+      required: true
+
   - type: textarea
     id: logs
     attributes:

@@ -1,0 +1,91 @@
+package admin
+
+import (
+	"context"
+	"time"
+
+	runtimepkg "github.com/jiujiu532/grok2api/app/platform/runtime"
+)
+
+func adminTokensRunAddImport(ctx context.Context, repo adminTokensRepository, refresh adminTokensRefreshService, task *runtimepkg.AsyncTask, pool string, tokens []string, tags []string) {
+	defer adminTokensExpireTask(task)
+	saved, skipped := 0, 0
+	refreshTokens := []string{}
+	for start := 0; start < len(tokens); start += adminTokensImportChunkSize {
+		if task.Cancelled {
+			task.FinishCancelled()
+			return
+		}
+		chunk := adminTokensChunk(tokens, start)
+		newTokens, err := adminTokensImportNewTokens(ctx, repo, chunk)
+		if err != nil {
+			task.FailTask(err.Error())
+			return
+		}
+		skipped += len(chunk) - len(newTokens)
+		if len(newTokens) > 0 {
+			result, err := repo.UpsertAccounts(ctx, adminTokensUpserts(newTokens, pool, tags))
+			if err != nil {
+				task.FailTask(err.Error())
+				return
+			}
+			saved += adminTokensUpserted(result, len(newTokens))
+			refreshTokens = append(refreshTokens, newTokens...)
+		}
+		task.Record(true, runtimepkg.TaskRecordOptions{Count: len(chunk), Detail: map[string]any{"saved": saved, "skipped": skipped}})
+	}
+	adminTokensFinishImport(ctx, refresh, task, refreshTokens, map[string]any{"mode": "add", "total": len(tokens), "ok": saved, "saved": saved, "fail": 0, "skipped": skipped})
+}
+
+func adminTokensRunReplaceImport(ctx context.Context, repo adminTokensRepository, refresh adminTokensRefreshService, task *runtimepkg.AsyncTask, payload map[string][]adminTokensUpsert) {
+	defer adminTokensExpireTask(task)
+	saved := 0
+	refreshTokens := []string{}
+	for pool, upserts := range payload {
+		if task.Cancelled {
+			task.FinishCancelled()
+			return
+		}
+		result, err := repo.ReplacePool(ctx, adminTokensReplacePoolCommand{Pool: pool, Upserts: upserts})
+		if err != nil {
+			task.FailTask(err.Error())
+			return
+		}
+		saved += adminTokensUpserted(result, len(upserts))
+		for _, upsert := range upserts {
+			refreshTokens = append(refreshTokens, upsert.Token)
+		}
+		task.Record(true, runtimepkg.TaskRecordOptions{Count: len(upserts), Detail: map[string]any{"pool": pool, "saved": saved}})
+	}
+	adminTokensFinishImport(ctx, refresh, task, refreshTokens, map[string]any{"mode": "replace", "total": len(refreshTokens), "ok": saved, "saved": saved, "fail": 0, "skipped": 0})
+}
+
+func adminTokensImportNewTokens(ctx context.Context, repo adminTokensRepository, chunk []string) ([]string, error) {
+	records, err := repo.GetAccounts(ctx, chunk)
+	if err != nil {
+		return nil, err
+	}
+	return adminTokensNewOnly(chunk, records), nil
+}
+
+func adminTokensFinishImport(ctx context.Context, refresh adminTokensRefreshService, task *runtimepkg.AsyncTask, tokens []string, result map[string]any) {
+	if len(tokens) > 0 {
+		if _, err := refresh.RefreshOnImport(ctx, tokens); err != nil {
+			task.FailTask(err.Error())
+			return
+		}
+	}
+	task.Finish(map[string]any{"status": "success", "summary": result})
+}
+
+func adminTokensChunk(tokens []string, start int) []string {
+	end := start + adminTokensImportChunkSize
+	if end > len(tokens) {
+		end = len(tokens)
+	}
+	return tokens[start:end]
+}
+
+func adminTokensExpireTask(task *runtimepkg.AsyncTask) {
+	go runtimepkg.ExpireTask(context.Background(), task.ID, 300*time.Second)
+}

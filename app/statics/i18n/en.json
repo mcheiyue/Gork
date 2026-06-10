@@ -168,6 +168,7 @@
     "statFast": "Fast Balance",
     "statExpert": "Expert Balance",
     "statHeavy": "Heavy Balance",
+    "statConsole": "Console Balance",
     "filterStatusLabel": "Status",
     "filterNsfwLabel": "NSFW",
     "filterTypeLabel": "Type",

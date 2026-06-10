@@ -1,77 +1,52 @@
-# ── Builder ───────────────────────────────────────────────────────────────────
-FROM python:3.13-alpine AS builder
+# Builder
+FROM golang:1.25-alpine AS builder
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    UV_PROJECT_ENVIRONMENT=/opt/venv
+RUN apk add --no-cache ca-certificates git
 
-ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+WORKDIR /src
 
-# Rust/Cargo are required to compile curl-cffi wheels on musl/Alpine.
-# If upstream ever ships musl wheels, remove cargo + rust to speed up builds.
-RUN apk add --no-cache \
-    ca-certificates \
-    build-base \
-    linux-headers \
-    libffi-dev \
-    openssl-dev \
-    curl-dev \
-    cargo \
-    rust
+COPY go.mod go.sum ./
+RUN go mod download
 
-WORKDIR /app
+COPY app ./app
+COPY cmd ./cmd
 
-# Pin uv to a minor version for reproducible builds.
-# Bump manually when you want to pick up a newer uv release.
-COPY --from=ghcr.io/astral-sh/uv:0.6 /uv /uvx /bin/
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /out/grok2api \
+    ./cmd/grok2api
 
-COPY pyproject.toml uv.lock ./
+# Runtime
+FROM alpine:3.22
 
-RUN uv sync --frozen --no-dev --no-install-project \
-    && find /opt/venv -type d \
-         \( -name "__pycache__" -o -name "tests" -o -name "test" -o -name "testing" \) \
-         -prune -exec rm -rf {} + \
-    && find /opt/venv -type f -name "*.pyc" -delete \
-    && find /opt/venv -type f -name "*.so" -exec strip --strip-unneeded {} + 2>/dev/null; true \
-    && rm -rf /root/.cache /tmp/uv-cache
-
-# ── Runtime ───────────────────────────────────────────────────────────────────
-FROM python:3.13-alpine
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    TZ=Asia/Shanghai \
-    VIRTUAL_ENV=/opt/venv \
+ENV TZ=Asia/Shanghai \
     SERVER_HOST=0.0.0.0 \
     SERVER_PORT=8000 \
-    SERVER_WORKERS=1
-
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+    SERVER_WORKERS=1 \
+    DATA_DIR=/app/data \
+    LOG_DIR=/app/logs
 
 RUN apk add --no-cache \
     tzdata \
     ca-certificates \
-    libffi \
-    openssl \
-    libgcc \
-    libstdc++ \
-    libcurl
+    wget \
+    && update-ca-certificates
 
 WORKDIR /app
 
-COPY --from=builder /opt/venv /opt/venv
-
+COPY --from=builder /out/grok2api /app/grok2api
 COPY pyproject.toml config.defaults.toml ./
-COPY app ./app
-COPY scripts ./scripts
+COPY app/statics ./app/statics
+COPY scripts/entrypoint.sh scripts/init_storage.sh ./scripts/
 
 RUN mkdir -p /app/data /app/logs \
-    && chmod +x /app/scripts/entrypoint.sh /app/scripts/init_storage.sh
+    && chmod +x /app/grok2api /app/scripts/entrypoint.sh /app/scripts/init_storage.sh
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD ["sh", "-c", "wget -qO /dev/null http://127.0.0.1:${SERVER_PORT}/health || exit 1"]
+    CMD ["sh", "-c", "wget -qO /dev/null http://127.0.0.1:${PORT:-${SERVER_PORT:-8000}}/health || exit 1"]
 
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
-CMD ["sh", "-c", "exec granian --interface asgi --host ${SERVER_HOST} --port ${SERVER_PORT} --workers ${SERVER_WORKERS} app.main:app"]
+CMD ["sh", "-c", "HOST=${HOST:-${SERVER_HOST:-0.0.0.0}} PORT=${PORT:-${SERVER_PORT:-8000}} exec /app/grok2api"]

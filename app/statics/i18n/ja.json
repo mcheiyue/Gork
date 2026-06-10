@@ -167,6 +167,7 @@
     "statFast": "Fast 残高",
     "statExpert": "Expert 残高",
     "statHeavy": "Heavy 残高",
+    "statConsole": "Console 残高",
     "filterStatusLabel": "状態",
     "filterNsfwLabel": "NSFW",
     "filterTypeLabel": "タイプ",

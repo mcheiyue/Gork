@@ -61,3 +61,48 @@ jobs:
           uvx pip-audit -r /tmp/req.txt --progress-spinner off \
             --ignore-vuln PYSEC-2026-161
           echo "Dependency audit passed"
+
+  govulncheck:
+    name: Go Module Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  trivy-fs:
+    name: Go Module and Static Asset Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan repository filesystem
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          vuln-type: os,library
+          scanners: vuln,secret,misconfig
+          skip-dirs: .git,.gocache,.uv-cache,data,logs
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+  trivy-image:
+    name: Docker Image Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build local image
+        run: docker build -t grok2api-security-scan:${{ github.sha }} .
+      - name: Scan local image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: grok2api-security-scan:${{ github.sha }}
+          vuln-type: os,library
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: "1"
