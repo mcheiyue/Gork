@@ -7,11 +7,11 @@ import (
 	"github.com/jiujiu532/grok2api/app/platform"
 )
 
-func (s *AccountRefreshService) refreshOne(ctx context.Context, record AccountRecord, applyFallback bool) (RefreshResult, error) {
+func (s *AccountRefreshService) refreshOne(ctx context.Context, record AccountRecord, applyFallback bool, bootstrap bool) (RefreshResult, error) {
 	if record.IsDeleted() {
 		return RefreshResult{}, nil
 	}
-	windows, err := s.fetchAllQuotas(ctx, record.Token, record.Pool)
+	windows, err := s.fetchAllQuotas(ctx, record.Token, record.Pool, bootstrap)
 	if err != nil {
 		marked, markErr := s.expireInvalidCredentials(ctx, record, err)
 		if markErr != nil || marked {
@@ -41,9 +41,13 @@ func (s *AccountRefreshService) applyFetchedWindows(
 	now := refreshNowMS()
 	patch := AccountPatch{Token: record.Token}
 	refreshed := false
+	effectivePool := record.Pool
+	if inferred := InferPoolFromLiveWindows(windows); inferred != nil {
+		effectivePool = *inferred
+	}
 	for _, modeID := range allRefreshModeIDs {
 		if window, ok := windows[modeID]; ok {
-			normalized := NormalizeQuotaWindow(record.Pool, modeID, &window)
+			normalized := NormalizeQuotaWindow(effectivePool, modeID, &window)
 			if normalized == nil {
 				continue
 			}
@@ -52,7 +56,7 @@ func (s *AccountRefreshService) applyFetchedWindows(
 			continue
 		}
 		if applyFallback {
-			applyFallbackWindowPatch(&patch, quotaSet, record.Pool, modeID, now)
+			applyFallbackWindowPatch(&patch, quotaSet, effectivePool, modeID, now)
 		}
 	}
 	return s.patchFetchedResult(ctx, record, patch, windows, refreshed)
@@ -73,8 +77,8 @@ func (s *AccountRefreshService) patchFetchedResult(
 		return RefreshResult{Checked: 1, Failed: failed}, nil
 	}
 	now := refreshNowMS()
-	if inferred := InferPool(windows); inferred != record.Pool {
-		patch.Pool = &inferred
+	if inferred := InferPoolFromLiveWindows(windows); inferred != nil && *inferred != record.Pool {
+		patch.Pool = inferred
 	}
 	if refreshed {
 		one := 1
@@ -203,7 +207,7 @@ func (s *AccountRefreshService) singleModePatch(
 			return nil, nil
 		}
 	} else if existing := quotaSet.Get(modeID); existing != nil {
-		setQuotaPatch(&patch, modeID, localUseWindowPatch(record.Pool, modeID, *existing).ToDict())
+		setQuotaPatch(&patch, modeID, localUseWindowPatch(record.Pool, modeID, *existing, useAtMS).ToDict())
 	}
 	if isUse {
 		one := 1
@@ -215,4 +219,41 @@ func (s *AccountRefreshService) singleModePatch(
 
 func (s *AccountRefreshService) expireInvalidCredentials(ctx context.Context, record AccountRecord, err error) (bool, error) {
 	return MarkAccountInvalidCredentials(ctx, s.repo, record.Token, err, "usage refresh")
+}
+
+func (s *AccountRefreshService) ResetExpiredConsoleWindows(ctx context.Context) (int, error) {
+	snapshot, err := s.repo.RuntimeSnapshot(ctx)
+	if err != nil {
+		return 0, err
+	}
+	now := refreshNowMS()
+	patches := []AccountPatch{}
+	for _, record := range snapshot.Items {
+		quotaSet, err := record.QuotaSet()
+		if err != nil || quotaSet.Console == nil || !quotaSet.Console.IsWindowExpired(now) {
+			continue
+		}
+		if quotaSet.Console.Remaining >= quotaSet.Console.Total {
+			continue
+		}
+		defaultWindow := DefaultQuotaWindow(record.Pool, 5)
+		if defaultWindow == nil {
+			continue
+		}
+		reset := QuotaWindow{
+			Remaining:     defaultWindow.Total,
+			Total:         defaultWindow.Total,
+			WindowSeconds: defaultWindow.WindowSeconds,
+			SyncedAt:      &now,
+			Source:        QuotaSourceDefault,
+		}
+		patches = append(patches, AccountPatch{Token: record.Token, QuotaConsole: reset.ToDict()})
+	}
+	if len(patches) == 0 {
+		return 0, nil
+	}
+	if _, err := s.repo.PatchAccounts(ctx, patches); err != nil {
+		return 0, err
+	}
+	return len(patches), nil
 }

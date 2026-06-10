@@ -73,6 +73,7 @@ func TestRegistryListByCapabilityMatchesPython(t *testing.T) {
 		"grok-4.20-auto",
 		"grok-4.20-expert",
 		"grok-4.20-heavy",
+		"grok-4.3-fast",
 		"grok-4.3-beta",
 	}
 	if !reflect.DeepEqual(chatNames, wantChatNames) {
@@ -139,6 +140,7 @@ func expectedRegistryModels() []ModelSpec {
 		{ModelName: "grok-4.20-auto", ModeID: ModeAuto, Tier: TierSuper, Capability: CapabilityChat, Enabled: true, PublicName: "Grok 4.20 Auto", PreferBest: true},
 		{ModelName: "grok-4.20-expert", ModeID: ModeExpert, Tier: TierSuper, Capability: CapabilityChat, Enabled: true, PublicName: "Grok 4.20 Expert", PreferBest: true},
 		{ModelName: "grok-4.20-heavy", ModeID: ModeHeavy, Tier: TierHeavy, Capability: CapabilityChat, Enabled: true, PublicName: "Grok 4.20 Heavy", PreferBest: true},
+		{ModelName: "grok-4.3-fast", ModeID: ModeFast, Tier: TierBasic, Capability: CapabilityChat, Enabled: true, PublicName: "Grok 4.3 Fast", PreferBest: true},
 		{ModelName: "grok-4.3-beta", ModeID: ModeGrok43, Tier: TierSuper, Capability: CapabilityChat, Enabled: true, PublicName: "Grok 4.3 Beta", PreferBest: false},
 		{ModelName: "grok-imagine-image-lite", ModeID: ModeFast, Tier: TierBasic, Capability: CapabilityImage, Enabled: true, PublicName: "Grok Imagine Image Lite", PreferBest: false},
 		{ModelName: "grok-imagine-image", ModeID: ModeAuto, Tier: TierSuper, Capability: CapabilityImage, Enabled: true, PublicName: "Grok Imagine Image", PreferBest: false},

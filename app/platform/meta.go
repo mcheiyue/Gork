@@ -1,10 +1,13 @@
 package platform
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
+)
+
+const (
+	ProjectName    = "grok2api"
+	ProjectVersion = "2.0.4.rc4"
 )
 
 var (
@@ -12,19 +15,10 @@ var (
 	projectMeta     map[string]string
 )
 
-// GetProjectMeta returns project metadata sourced from pyproject.toml.
+// GetProjectMeta returns Go runtime project metadata.
 func GetProjectMeta() map[string]string {
 	projectMetaOnce.Do(func() {
-		projectMeta = map[string]string{"name": "grok2api", "version": "0.0.0"}
-		content, err := os.ReadFile(filepath.Join(rootDir(), "pyproject.toml"))
-		if err != nil {
-			return
-		}
-		for key, value := range parseProjectToml(content) {
-			if strings.TrimSpace(value) != "" {
-				projectMeta[key] = strings.TrimSpace(value)
-			}
-		}
+		projectMeta = map[string]string{"name": ProjectName, "version": ProjectVersion}
 	})
 
 	out := make(map[string]string, len(projectMeta))

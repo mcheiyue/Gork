@@ -154,12 +154,44 @@ func TestRefreshOnImportAppliesFetchedQuotasAndKeepsPythonCheckedCount(t *testin
 	}
 }
 
+func TestRefreshOnImportInfersPoolFromEntitlementWindows(t *testing.T) {
+	oldNow := refreshNowMS
+	refreshNowMS = func() int64 { return 1500 }
+	t.Cleanup(func() { refreshNowMS = oldNow })
+	record := AccountRecord{Token: "tok-heavy", Pool: "basic", Status: AccountStatusActive, Quota: DefaultQuotaSet("basic").ToDict()}
+	repo := &fakeRefreshRepo{records: []AccountRecord{record}}
+	fetcher := &fakeUsageFetcher{responses: map[string]map[string]any{
+		"auto":   {"remainingQueries": 0, "totalQueries": 0, "windowSizeSeconds": 0},
+		"expert": {"remainingQueries": 150, "totalQueries": 150, "windowSizeSeconds": 7200},
+	}}
+	service := NewAccountRefreshService(repo, AccountRefreshOptions{Fetcher: fetcher, UsageConcurrency: 1})
+
+	result, err := service.RefreshOnImport(context.Background(), []string{"tok-heavy"})
+
+	if err != nil {
+		t.Fatalf("RefreshOnImport returned error: %v", err)
+	}
+	if result.Checked != 2 || result.Refreshed != 1 || result.Failed != 0 {
+		t.Fatalf("RefreshOnImport result = %#v", result)
+	}
+	if len(repo.patches) != 1 {
+		t.Fatalf("patch count = %d, want 1", len(repo.patches))
+	}
+	patch := repo.patches[0]
+	if patch.Pool == nil || *patch.Pool != "heavy" {
+		t.Fatalf("pool patch = %#v, want heavy", patch.Pool)
+	}
+	if patch.QuotaExpert["total"] != 150 || patch.QuotaExpert["remaining"] != 150 {
+		t.Fatalf("expert quota should be kept after heavy inference, got %#v", patch.QuotaExpert)
+	}
+}
+
 func TestRefreshCallAsyncConsoleDecrementsLocalQuota(t *testing.T) {
 	oldNow := refreshNowMS
 	refreshNowMS = func() int64 { return 2000 }
 	t.Cleanup(func() { refreshNowMS = oldNow })
 	quota := DefaultQuotaSet("basic")
-	quota.Console.Remaining = 3
+	quota.Console.Remaining = 20
 	quota.Console.ResetAt = nil
 	record := AccountRecord{Token: "tok-console", Pool: "basic", Status: AccountStatusActive, Quota: quota.ToDict()}
 	repo := &fakeRefreshRepo{records: []AccountRecord{record}}
@@ -177,8 +209,68 @@ func TestRefreshCallAsyncConsoleDecrementsLocalQuota(t *testing.T) {
 	if patch.UsageUseDelta == nil || *patch.UsageUseDelta != 1 || patch.LastUseAt == nil || *patch.LastUseAt != 2000 {
 		t.Fatalf("use patch fields = %#v", patch)
 	}
-	if patch.QuotaConsole["remaining"] != 2 || patch.QuotaConsole["reset_at"] != int64(902000) || patch.QuotaConsole["source"] != int(QuotaSourceEstimated) {
+	if patch.QuotaConsole["remaining"] != 19 || patch.QuotaConsole["reset_at"] != nil || patch.QuotaConsole["source"] != int(QuotaSourceEstimated) {
 		t.Fatalf("console quota patch = %#v", patch.QuotaConsole)
+	}
+}
+
+func TestRefreshCallAsyncConsoleStartsResetTimerAtThreshold(t *testing.T) {
+	oldNow := refreshNowMS
+	refreshNowMS = func() int64 { return 3000 }
+	t.Cleanup(func() { refreshNowMS = oldNow })
+	quota := DefaultQuotaSet("basic")
+	quota.Console.Remaining = 16
+	quota.Console.ResetAt = nil
+	record := AccountRecord{Token: "tok-console-threshold", Pool: "basic", Status: AccountStatusActive, Quota: quota.ToDict()}
+	repo := &fakeRefreshRepo{records: []AccountRecord{record}}
+	service := NewAccountRefreshService(repo, AccountRefreshOptions{Fetcher: &fakeUsageFetcher{}})
+
+	if err := service.RefreshCallAsync(context.Background(), "tok-console-threshold", 5); err != nil {
+		t.Fatalf("RefreshCallAsync returned error: %v", err)
+	}
+
+	patch := repo.patches[0]
+	if patch.QuotaConsole["remaining"] != 15 || patch.QuotaConsole["reset_at"] != int64(903000) {
+		t.Fatalf("console threshold quota patch = %#v", patch.QuotaConsole)
+	}
+}
+
+func TestResetExpiredConsoleWindowsRestoresDefaultQuota(t *testing.T) {
+	oldNow := refreshNowMS
+	refreshNowMS = func() int64 { return 1_000_000 }
+	t.Cleanup(func() { refreshNowMS = oldNow })
+	expiredAt := int64(999_000)
+	activeAt := int64(1_001_000)
+	needsResetQuota := DefaultQuotaSet("basic")
+	needsResetQuota.Console.Remaining = 7
+	needsResetQuota.Console.ResetAt = &expiredAt
+	fullQuota := DefaultQuotaSet("basic")
+	fullQuota.Console.Remaining = fullQuota.Console.Total
+	fullQuota.Console.ResetAt = &expiredAt
+	activeQuota := DefaultQuotaSet("basic")
+	activeQuota.Console.Remaining = 5
+	activeQuota.Console.ResetAt = &activeAt
+	repo := &fakeRefreshRepo{snapshot: RuntimeSnapshot{Items: []AccountRecord{
+		{Token: "tok-reset", Pool: "basic", Status: AccountStatusActive, Quota: needsResetQuota.ToDict()},
+		{Token: "tok-full", Pool: "basic", Status: AccountStatusActive, Quota: fullQuota.ToDict()},
+		{Token: "tok-active", Pool: "basic", Status: AccountStatusActive, Quota: activeQuota.ToDict()},
+	}}}
+	service := NewAccountRefreshService(repo, AccountRefreshOptions{Fetcher: &fakeUsageFetcher{}})
+
+	count, err := service.ResetExpiredConsoleWindows(context.Background())
+
+	if err != nil {
+		t.Fatalf("ResetExpiredConsoleWindows returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("reset count = %d, want 1", count)
+	}
+	if len(repo.patches) != 1 || repo.patches[0].Token != "tok-reset" {
+		t.Fatalf("reset patches = %#v", repo.patches)
+	}
+	patch := repo.patches[0].QuotaConsole
+	if patch["remaining"] != 30 || patch["total"] != 30 || patch["reset_at"] != nil || patch["source"] != int(QuotaSourceDefault) {
+		t.Fatalf("reset console quota patch = %#v", patch)
 	}
 }
 
@@ -334,7 +426,7 @@ func TestRunRefreshBatchHonorsUsageConcurrency(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := service.runRefreshBatch(context.Background(), records, false)
+		_, err := service.runRefreshBatch(context.Background(), records, false, false)
 		done <- err
 	}()
 
@@ -391,7 +483,7 @@ func TestRefreshOneAppliesFallbackForFetchFailure(t *testing.T) {
 	repo := &fakeRefreshRepo{}
 	service := NewAccountRefreshService(repo, AccountRefreshOptions{Fetcher: &fakeUsageFetcher{err: errors.New("network")}})
 
-	result, err := service.refreshOne(context.Background(), record, true)
+	result, err := service.refreshOne(context.Background(), record, true, false)
 
 	if err != nil {
 		t.Fatalf("refreshOne returned error: %v", err)

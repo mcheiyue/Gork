@@ -37,6 +37,7 @@ var (
 	appMainStartRefreshRuntime        appMainLifecycleStep                = defaultAppMainStartRefreshRuntime
 	appMainStartProxyScheduler        appMainLifecycleStep                = defaultAppMainStartProxyScheduler
 	appMainAcquireSchedulerFileLock   func(context.Context) (Hook, error) = acquireAppMainSchedulerFileLock
+	appMainConsoleResetInterval                                           = 30 * time.Second
 )
 
 func defaultLifecycleHooks() ([]Hook, []Hook) {
@@ -240,11 +241,16 @@ func defaultAppMainStartRefreshRuntime(ctx context.Context, state *appMainLifecy
 		leader = localLockCleanup != nil
 	}
 	state.bindAdminRuntimeWithRefresh(service)
+	consoleResetCleanup := appMainStartConsoleQuotaResetLoop(service, appMainConsoleResetInterval)
 	accountcontrol.SetRefreshService(service)
 	accountcontrol.SetRefreshScheduler(scheduler)
 	accountcontrol.SetRefreshSchedulerLeader(leader)
 	accountcontrol.ReconcileRefreshRuntime()
 	return func(ctx context.Context) error {
+		if consoleResetCleanup != nil {
+			consoleResetCleanup(ctx)
+			consoleResetCleanup = nil
+		}
 		scheduler.Stop()
 		if state.schedulerKey != nil {
 			_, _ = state.schedulerKey.Release(ctx)
@@ -262,6 +268,33 @@ func defaultAppMainStartRefreshRuntime(ctx context.Context, state *appMainLifecy
 		state.bindAdminRuntime()
 		return nil
 	}, nil
+}
+
+func appMainStartConsoleQuotaResetLoop(service *accountcontrol.AccountRefreshService, interval time.Duration) Hook {
+	if service == nil || interval <= 0 {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		timer := time.NewTimer(interval)
+		defer timer.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+				_, _ = service.ResetExpiredConsoleWindows(ctx)
+				timer.Reset(interval)
+			}
+		}
+	}()
+	return func(context.Context) error {
+		cancel()
+		<-done
+		return nil
+	}
 }
 
 func (state *appMainLifecycleState) bindAdminRuntime() {

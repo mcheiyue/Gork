@@ -104,6 +104,30 @@ func InferPool(windows map[int]QuotaWindow) string {
 	return "basic"
 }
 
+func InferPoolFromLiveWindows(windows map[int]QuotaWindow) *string {
+	if auto, ok := windows[0]; ok {
+		inferred := InferPool(windows)
+		if inferred != "basic" || auto.Total == 20 {
+			return &inferred
+		}
+	}
+	for _, modeID := range []int{2, 4} {
+		window, ok := windows[modeID]
+		if !ok {
+			continue
+		}
+		switch window.Total {
+		case 150:
+			pool := "heavy"
+			return &pool
+		case 50:
+			pool := "super"
+			return &pool
+		}
+	}
+	return nil
+}
+
 func quotaDefaultsForPool(pool string) AccountQuotaSet {
 	switch pool {
 	case "super":

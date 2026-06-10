@@ -176,6 +176,59 @@ func TestRefreshRuntimeFallsBackToLocalSchedulerLockWithoutRedis(t *testing.T) {
 	}
 }
 
+func TestRefreshRuntimeStartsConsoleQuotaResetLoop(t *testing.T) {
+	expiredAt := int64(1)
+	repo := &lifecycleAccountRepository{snapshot: accountcontrol.RuntimeSnapshot{
+		Items: []accountcontrol.AccountRecord{{
+			Token:  "tok-console-reset",
+			Pool:   "basic",
+			Status: accountcontrol.AccountStatusActive,
+			Quota: accountcontrol.AccountQuotaSet{
+				Auto: accountcontrol.QuotaWindow{Remaining: 0, Total: 0, WindowSeconds: 0},
+				Fast: accountcontrol.QuotaWindow{Remaining: 30, Total: 30, WindowSeconds: 86400},
+				Expert: accountcontrol.QuotaWindow{
+					Remaining: 0,
+					Total:     0,
+				},
+				Console: &accountcontrol.QuotaWindow{Remaining: 1, Total: 30, WindowSeconds: 900, ResetAt: &expiredAt},
+			}.ToDict(),
+		}},
+	}}
+	state := &appMainLifecycleState{repository: repo}
+	oldAcquireLocalLock := appMainAcquireSchedulerFileLock
+	oldConsoleResetInterval := appMainConsoleResetInterval
+	t.Cleanup(func() {
+		appMainAcquireSchedulerFileLock = oldAcquireLocalLock
+		appMainConsoleResetInterval = oldConsoleResetInterval
+		accountcontrol.SetRefreshScheduler(nil)
+		accountcontrol.SetRefreshSchedulerLeader(false)
+		accountcontrol.SetRefreshService(nil)
+	})
+	appMainAcquireSchedulerFileLock = func(context.Context) (Hook, error) {
+		return func(context.Context) error { return nil }, nil
+	}
+	appMainConsoleResetInterval = time.Millisecond
+
+	cleanup, err := defaultAppMainStartRefreshRuntime(context.Background(), state)
+
+	if err != nil {
+		t.Fatalf("refresh runtime error: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(repo.patches) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := cleanup(context.Background()); err != nil {
+		t.Fatalf("cleanup error: %v", err)
+	}
+	if len(repo.patches) == 0 {
+		t.Fatalf("console quota reset loop did not patch expired console quota")
+	}
+	if repo.patches[0].QuotaConsole["remaining"] != 30 || repo.patches[0].QuotaConsole["reset_at"] != nil {
+		t.Fatalf("console reset patch = %#v", repo.patches[0].QuotaConsole)
+	}
+}
+
 func TestDefaultAccountDirectoryLifecycleBootstrapsAndSyncsLikePython(t *testing.T) {
 	t.Setenv("ACCOUNT_SYNC_ACTIVE_INTERVAL", "0")
 	t.Setenv("ACCOUNT_SYNC_INTERVAL", "1")

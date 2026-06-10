@@ -35,7 +35,7 @@ Grok2API 是一个基于 **Go** 构建的 Grok 网关，将 Grok Web 能力以 O
 | :-- | :-- |
 | 镜像地址 | `ghcr.io/jiujiu532/grok2api:latest` |
 | 架构 | `linux/amd64`, `linux/arm64` |
-| 基础镜像 | `python:3.13-alpine` |
+| 基础镜像 | Go 静态二进制运行镜像 |
 | 默认端口 | `8000` |
 | 默认数据目录 | `/app/data` |
 | 默认日志目录 | `/app/logs` |
@@ -270,7 +270,7 @@ server {
 
 | 类型 | 说明 | 适用模型 |
 | :-- | :-- | :-- |
-| **付费账号** | x.ai 官方付费账号 | 所有 `grok-4.20-*`、`grok-4.3-beta` |
+| **付费账号** | x.ai 官方付费账号 | 所有 `grok-4.20-*`、`grok-4.3-beta`、`grok-4.3-fast` |
 | **免费账号** | 通过 `console.x.ai` 访问的免费账号 | 所有 `*-console` 模型 |
 
 ### 免费账号配置
@@ -368,6 +368,7 @@ docker compose --profile redis up -d
 | `grok-4.20-auto` | `auto` | `super`，优先使用高等级账号池 |
 | `grok-4.20-expert` | `expert` | `super`，优先使用高等级账号池 |
 | `grok-4.20-heavy` | `heavy` | `heavy` |
+| `grok-4.3-fast` | `fast` | `basic`，优先使用高等级账号池 |
 | `grok-4.3-beta` | `grok-420-computer-use-sa` | `super` |
 
 ### Chat（console.x.ai 免费账号）
@@ -399,6 +400,8 @@ docker compose --profile redis up -d
 | C（Console） | 30 次 | 15 分钟 | 所有 `*-console` / `*-low` / `*-medium` / `*-high` / `*-xhigh` 模型共享 |
 
 <sub>以上数值基于简单压测得出（单账号约 40-50 次/5 分钟触发服务端限制），设为 30 次/15 分钟留有余量，避免触发上游真实 429。实际限制可能随 xAI 策略调整而变化。</sub>
+
+Console 账号采用延迟恢复轮换策略：本地调用会扣减剩余额度，只有当剩余次数降到 15 次及以下时才启动 15 分钟恢复计时器；后台每 30 秒巡检并自动重置已过期的 Console 配额窗口。
 
 ### Image / Image Edit / Video
 
@@ -516,6 +519,16 @@ Go 版本当前是单进程 HTTP 服务，容器内不再通过 `SERVER_WORKERS`
 <br>
 
 ## 致谢
+
+## 更新记录
+
+### 当前 Go 主线
+
+- 移植 Python 上游 `27a1616..7e1d9ae` 中适用于 Go 主线的账号刷新、模型注册和 Console 配额行为。
+- 修复导入/手动刷新时 SuperGrok、heavy 账号可能被本地 basic 默认值卡住的问题，刷新时会从实时 entitlement quota 推断账号池。
+- 新增 `grok-4.3-fast` 模型，行为与 `grok-4.20-fast` 对齐。
+- 修复 Console 模型在 random 选号策略下本地配额不扣减、不恢复的问题，并增加过期 Console 配额窗口后台恢复。
+- Python-only 的 `aiohttp >= 3.14.0` 依赖安全更新不适用于 Go 运行时。
 
 - 上游：[chenyme/grok2api](https://github.com/chenyme/grok2api)
 - DeepWiki：[chenyme/grok2api](https://deepwiki.com/chenyme/grok2api)

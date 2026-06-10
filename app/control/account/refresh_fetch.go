@@ -12,8 +12,12 @@ import (
 
 var refreshAccountLookupBatchSize = 500
 
-func (s *AccountRefreshService) fetchAllQuotas(ctx context.Context, token string, pool string) (map[int]QuotaWindow, error) {
-	windows, err := protocol.FetchAllUsageQuotas(ctx, token, SupportedModeIDs(pool), protocol.UsageFetchOptions{
+func (s *AccountRefreshService) fetchAllQuotas(ctx context.Context, token string, pool string, bootstrap bool) (map[int]QuotaWindow, error) {
+	modeIDs := SupportedModeIDs(pool)
+	if bootstrap {
+		modeIDs = nil
+	}
+	windows, err := protocol.FetchAllUsageQuotas(ctx, token, modeIDs, protocol.UsageFetchOptions{
 		Fetcher:  s.fetcher,
 		SyncedAt: refreshNowMS(),
 	})
@@ -56,7 +60,7 @@ func (s *AccountRefreshService) RefreshOnImport(ctx context.Context, tokens []st
 	if len(active) == 0 {
 		return RefreshResult{Checked: len(records)}, nil
 	}
-	results, err := s.runRefreshBatch(ctx, active, true)
+	results, err := s.runRefreshBatch(ctx, active, true, true)
 	if err != nil {
 		return RefreshResult{}, err
 	}
@@ -94,7 +98,7 @@ func (s *AccountRefreshService) RefreshScheduled(ctx context.Context, pool *stri
 	if pool != nil {
 		records = filterRefreshPool(records, *pool)
 	}
-	results, err := s.runRefreshBatch(ctx, records, true)
+	results, err := s.runRefreshBatch(ctx, records, true, false)
 	if err != nil {
 		return RefreshResult{}, err
 	}
@@ -123,7 +127,7 @@ func (s *AccountRefreshService) RefreshTokens(ctx context.Context, tokens []stri
 	if err != nil {
 		return RefreshResult{}, err
 	}
-	results, err := s.runRefreshBatch(ctx, filterRefreshManageable(records), false)
+	results, err := s.runRefreshBatch(ctx, filterRefreshManageable(records), false, true)
 	if err != nil {
 		return RefreshResult{}, err
 	}
@@ -155,7 +159,7 @@ func (s *AccountRefreshService) getAccountsBatched(ctx context.Context, tokens [
 	return records, nil
 }
 
-func (s *AccountRefreshService) runRefreshBatch(ctx context.Context, records []AccountRecord, applyFallback bool) ([]RefreshResult, error) {
+func (s *AccountRefreshService) runRefreshBatch(ctx context.Context, records []AccountRecord, applyFallback bool, bootstrap bool) ([]RefreshResult, error) {
 	if len(records) == 0 {
 		return []RefreshResult{}, nil
 	}
@@ -174,7 +178,7 @@ func (s *AccountRefreshService) runRefreshBatch(ctx context.Context, records []A
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			result, err := s.refreshOne(ctx, record, applyFallback)
+			result, err := s.refreshOne(ctx, record, applyFallback, bootstrap)
 			if err != nil {
 				errs <- err
 				return

@@ -1,31 +1,21 @@
 package platform
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestGetProjectMetaReadsPyprojectProjectSection(t *testing.T) {
-	root := repoRootForPathTest(t)
-	pyproject, err := os.ReadFile(filepath.Join(root, "pyproject.toml"))
-	if err != nil {
-		t.Fatalf("read pyproject.toml: %v", err)
-	}
-
-	wantName := findTomlStringValue(t, string(pyproject), "name")
-	wantVersion := findTomlStringValue(t, string(pyproject), "version")
+func TestGetProjectMetaReturnsGoRuntimeMetadata(t *testing.T) {
 	meta := GetProjectMeta()
 
-	if got := meta["name"]; got != wantName {
-		t.Fatalf("project name = %q, want %q", got, wantName)
+	if got := meta["name"]; got != ProjectName {
+		t.Fatalf("project name = %q, want %q", got, ProjectName)
 	}
-	if got := meta["version"]; got != wantVersion {
-		t.Fatalf("project version = %q, want %q", got, wantVersion)
+	if got := meta["version"]; got != ProjectVersion {
+		t.Fatalf("project version = %q, want %q", got, ProjectVersion)
 	}
-	if got := GetProjectVersion(); got != wantVersion {
-		t.Fatalf("GetProjectVersion() = %q, want %q", got, wantVersion)
+	if got := GetProjectVersion(); got != ProjectVersion {
+		t.Fatalf("GetProjectVersion() = %q, want %q", got, ProjectVersion)
 	}
 }
 

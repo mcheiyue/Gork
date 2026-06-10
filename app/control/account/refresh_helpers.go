@@ -71,8 +71,7 @@ func rateLimitedWindowPatch(window QuotaWindow, now int64) QuotaWindow {
 	}
 }
 
-func localUseWindowPatch(pool string, modeID int, window QuotaWindow) QuotaWindow {
-	now := refreshNowMS()
+func localUseWindowPatch(pool string, modeID int, window QuotaWindow, now int64) QuotaWindow {
 	if window.IsWindowExpired(now) {
 		if fallback := DefaultQuotaWindow(pool, modeID); fallback != nil {
 			resetAt := now + int64(fallback.WindowSeconds)*1000
@@ -86,11 +85,16 @@ func localUseWindowPatch(pool string, modeID int, window QuotaWindow) QuotaWindo
 			}
 		}
 	}
-	if window.ResetAt == nil && window.WindowSeconds > 0 {
+	window.Remaining = clampInt(window.Remaining-1, 0, window.Total)
+	if modeID == 5 {
+		if window.ResetAt == nil && window.Remaining <= 15 && window.WindowSeconds > 0 {
+			resetAt := now + int64(window.WindowSeconds)*1000
+			window.ResetAt = &resetAt
+		}
+	} else if window.ResetAt == nil && window.WindowSeconds > 0 {
 		resetAt := now + int64(window.WindowSeconds)*1000
 		window.ResetAt = &resetAt
 	}
-	window.Remaining = clampInt(window.Remaining-1, 0, window.Total)
 	window.Source = QuotaSourceEstimated
 	return window
 }
