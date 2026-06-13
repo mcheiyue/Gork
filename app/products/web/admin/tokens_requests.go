@@ -9,9 +9,10 @@ type adminTokensReplacePoolRequest struct {
 }
 
 type adminTokensAddRequest struct {
-	Tokens []string `json:"tokens"`
-	Pool   string   `json:"pool"`
-	Tags   []string `json:"tags"`
+	Tokens   []string `json:"tokens"`
+	Pool     string   `json:"pool"`
+	Tags     []string `json:"tags"`
+	AutoNSFW bool     `json:"auto_nsfw"`
 }
 
 type adminTokensEditRequest struct {
@@ -36,6 +37,7 @@ type adminTokensImportRequest struct {
 	TokensText string `json:"tokens_text"`
 	Tokens     []any  `json:"tokens"`
 	Tags       any    `json:"tags"`
+	AutoNSFW   bool   `json:"auto_nsfw"`
 }
 
 func adminTokensRepo() (adminTokensRepository, error) {

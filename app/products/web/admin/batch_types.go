@@ -39,6 +39,8 @@ type adminBatchRefreshService interface {
 
 type adminBatchRefreshResult struct {
 	Refreshed int
+	Expired   int
+	Failed    int
 }
 
 type adminBatchRequest struct {
@@ -48,9 +50,10 @@ type adminBatchRequest struct {
 type adminBatchHandler func(context.Context, string) (map[string]any, error)
 
 type adminBatchItemResult struct {
-	Token string
-	Data  map[string]any
-	Error string
+	Token      string
+	Data       map[string]any
+	Error      string
+	ErrorClass string
 }
 
 var (

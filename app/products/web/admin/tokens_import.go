@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 
 	runtimepkg "github.com/dslzl/gork/app/platform/runtime"
@@ -29,20 +30,23 @@ func handleAdminTokensImportAsync(w http.ResponseWriter, r *http.Request) {
 	task := runtimepkg.CreateTask(total)
 	taskCtx := context.Background()
 	if spec.Replace {
-		adminTokensAsyncRunner(func() { adminTokensRunReplaceImport(taskCtx, repo, refresh, task, payload) })
+		adminTokensAsyncRunner(func() { adminTokensRunReplaceImport(taskCtx, repo, refresh, task, payload, spec.AutoNSFW) })
 	} else {
-		adminTokensAsyncRunner(func() { adminTokensRunAddImport(taskCtx, repo, refresh, task, spec.Pool, spec.Tokens, spec.Tags) })
+		adminTokensAsyncRunner(func() {
+			adminTokensRunAddImport(taskCtx, repo, refresh, task, spec.Pool, spec.Tokens, spec.Tags, spec.AutoNSFW)
+		})
 	}
 	writeAdminJSON(w, http.StatusOK, map[string]any{"status": "success", "task_id": task.ID, "total": total})
 }
 
 type adminTokensImportSpec struct {
-	Pool    string
-	Mode    string
-	Text    string
-	Tags    []string
-	Replace bool
-	Tokens  []string
+	Pool     string
+	Mode     string
+	Text     string
+	Tags     []string
+	Replace  bool
+	Tokens   []string
+	AutoNSFW bool
 }
 
 func adminTokensImportSpecFromRequest(r *http.Request) (adminTokensImportSpec, error) {
@@ -62,20 +66,44 @@ func adminTokensImportSpecFromJSON(r *http.Request) (adminTokensImportSpec, erro
 	if text == "" && len(req.Tokens) > 0 {
 		text = strings.Join(adminTokenStringSlice(req.Tokens), "\n")
 	}
-	return adminTokensImportSpec{Pool: adminTokenPool(req.Pool), Mode: adminTokenPool(req.Mode), Text: text, Tags: adminTokenTags(req.Tags)}, nil
+	autoNSFW, err := adminTokensAutoNSFWFromQuery(r, req.AutoNSFW)
+	if err != nil {
+		return adminTokensImportSpec{}, err
+	}
+	return adminTokensImportSpec{Pool: adminTokenPool(req.Pool), Mode: adminTokenPool(req.Mode), Text: text, Tags: adminTokenTags(req.Tags), AutoNSFW: autoNSFW}, nil
 }
 
 func adminTokensImportSpecFromForm(r *http.Request) (adminTokensImportSpec, error) {
 	if err := r.ParseMultipartForm(32 << 20); err != nil && err != http.ErrNotMultipart {
 		return adminTokensImportSpec{}, err
 	}
-	spec := adminTokensImportSpec{Pool: adminTokenPool(r.FormValue("pool")), Mode: adminTokenPool(r.FormValue("mode")), Text: r.FormValue("tokens_text"), Tags: adminTokenTags(r.FormValue("tags"))}
+	autoNSFW, err := adminTokensBoolParam(r.FormValue("auto_nsfw"), false)
+	if err != nil {
+		return adminTokensImportSpec{}, err
+	}
+	spec := adminTokensImportSpec{Pool: adminTokenPool(r.FormValue("pool")), Mode: adminTokenPool(r.FormValue("mode")), Text: r.FormValue("tokens_text"), Tags: adminTokenTags(r.FormValue("tags")), AutoNSFW: autoNSFW}
 	file, header, err := r.FormFile("file")
 	if err == nil {
 		defer file.Close()
 		return adminTokensImportSpecFromFile(spec, file, header)
 	}
 	return spec, nil
+}
+
+func adminTokensAutoNSFWFromQuery(r *http.Request, fallback bool) (bool, error) {
+	return adminTokensBoolParam(r.URL.Query().Get("auto_nsfw"), fallback)
+}
+
+func adminTokensBoolParam(raw string, fallback bool) (bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, adminValidation("Invalid boolean query parameter", "auto_nsfw")
+	}
+	return value, nil
 }
 
 func adminTokensImportSpecFromFile(spec adminTokensImportSpec, file multipart.File, header *multipart.FileHeader) (adminTokensImportSpec, error) {

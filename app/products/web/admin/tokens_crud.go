@@ -10,6 +10,11 @@ func handleAdminTokensSave(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	autoNSFW, err := adminTokensAutoNSFWFromQuery(r, false)
+	if err != nil {
+		writeAdminError(w, err)
+		return
+	}
 	payload := map[string][]any{}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeAdminError(w, adminValidation("Invalid JSON body", "body"))
@@ -21,7 +26,16 @@ func handleAdminTokensSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	adminTokensRunRefresh(refresh, tokens)
-	writeAdminJSON(w, http.StatusOK, map[string]any{"status": "success", "count": count})
+	result := map[string]any{"status": "success", "count": count}
+	if autoNSFW {
+		nsfwCount, err := adminTokensEnableAutoNSFW(r.Context(), repo, tokens)
+		if err != nil {
+			writeAdminError(w, err)
+			return
+		}
+		result["nsfw"] = nsfwCount
+	}
+	writeAdminJSON(w, http.StatusOK, result)
 }
 
 func handleAdminTokensAdd(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +48,12 @@ func handleAdminTokensAdd(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, adminValidation("Invalid JSON body", "body"))
 		return
 	}
+	autoNSFW, err := adminTokensAutoNSFWFromQuery(r, req.AutoNSFW)
+	if err != nil {
+		writeAdminError(w, err)
+		return
+	}
+	req.AutoNSFW = autoNSFW
 	result, err := adminTokensAdd(r, repo, refresh, req)
 	if err != nil {
 		writeAdminError(w, err)

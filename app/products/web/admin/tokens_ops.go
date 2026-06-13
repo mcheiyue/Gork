@@ -49,7 +49,15 @@ func adminTokensAdd(r *http.Request, repo adminTokensRepository, refresh adminTo
 	} else {
 		adminTokensRunRefresh(refresh, newTokens)
 	}
-	return map[string]any{"status": "success", "count": adminTokensUpserted(result, len(newTokens)), "skipped": len(tokens) - len(newTokens), "synced": pool == "auto"}, nil
+	response := map[string]any{"status": "success", "count": adminTokensUpserted(result, len(newTokens)), "skipped": len(tokens) - len(newTokens), "synced": pool == "auto"}
+	if req.AutoNSFW {
+		nsfwCount, err := adminTokensEnableAutoNSFW(r.Context(), repo, newTokens)
+		if err != nil {
+			return nil, err
+		}
+		response["nsfw"] = nsfwCount
+	}
+	return response, nil
 }
 
 func adminTokensEdit(r *http.Request, repo adminTokensRepository, req adminTokensEditRequest) (map[string]any, error) {

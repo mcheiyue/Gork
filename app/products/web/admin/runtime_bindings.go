@@ -136,7 +136,7 @@ func (r accountRuntimeRepository) ReplacePool(ctx context.Context, command admin
 
 func (s accountRuntimeRefreshService) RefreshTokens(ctx context.Context, tokens []string) (adminBatchRefreshResult, error) {
 	result, err := s.service.RefreshTokens(ctx, tokens)
-	return adminBatchRefreshResult{Refreshed: result.Refreshed}, err
+	return adminBatchRefreshResult{Refreshed: result.Refreshed, Expired: result.Expired, Failed: result.Failed}, err
 }
 
 func (s accountRuntimeRefreshService) RefreshOnImport(ctx context.Context, tokens []string) (adminTokensRefreshResult, error) {

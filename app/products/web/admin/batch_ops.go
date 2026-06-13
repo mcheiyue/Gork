@@ -33,10 +33,13 @@ func adminBatchNSFWPatch(token string, enabled bool) adminBatchAccountPatch {
 func adminBatchRefreshOne(ctx context.Context, service adminBatchRefreshService, token string) (map[string]any, error) {
 	result, err := service.RefreshTokens(ctx, []string{token})
 	if err != nil {
-		return nil, err
+		return nil, adminBatchClassified("transient", err)
 	}
 	if result.Refreshed == 0 {
-		return nil, platform.NewUpstreamError("未获取到真实配额数据", 502, "")
+		if result.Expired > 0 {
+			return nil, adminBatchClassified("expired", platform.NewUpstreamError("账户已失效", 502, ""))
+		}
+		return nil, adminBatchClassified("transient", platform.NewUpstreamError("未获取到真实配额数据", 502, ""))
 	}
 	return map[string]any{"refreshed": result.Refreshed}, nil
 }

@@ -118,6 +118,11 @@ func TestAdminBatchNSFWNoTokensAvailableReturnsValidation(t *testing.T) {
 
 func TestAdminBatchRefreshSyncRecordsFailures(t *testing.T) {
 	resetAdminRouterDepsForTest(t)
+	repo := &fakeAdminBatchRepo{accounts: map[string]adminAssetsAccount{
+		"tok-ok":  {Token: "tok-ok", Status: "active"},
+		"tok-bad": {Token: "tok-bad", Status: "active"},
+	}}
+	adminBatchRepoProvider = func() adminBatchRepository { return repo }
 	adminBatchRefreshServiceProvider = func() adminBatchRefreshService {
 		return fakeAdminBatchRefreshService{refreshed: map[string]int{"tok-ok": 1}}
 	}
@@ -138,6 +143,79 @@ func TestAdminBatchRefreshSyncRecordsFailures(t *testing.T) {
 	}
 }
 
+func TestAdminBatchRefreshFiltersNonManageableExplicitTokens(t *testing.T) {
+	resetAdminRouterDepsForTest(t)
+	repo := &fakeAdminBatchRepo{accounts: map[string]adminAssetsAccount{
+		"active-token":   {Token: "active-token", Status: "active"},
+		"disabled-token": {Token: "disabled-token", Status: "disabled"},
+	}}
+	service := &captureAdminBatchRefreshService{results: map[string]adminBatchRefreshResult{
+		"active-token": {Refreshed: 1},
+	}}
+	adminBatchRepoProvider = func() adminBatchRepository { return repo }
+	adminBatchRefreshServiceProvider = func() adminBatchRefreshService { return service }
+
+	rec := adminRequest(http.MethodPost, "/admin/api/batch/refresh", `{"tokens":["active-token","disabled-token"]}`, "Bearer gork")
+	body := decodeAdminBody(t, rec)
+	summary := body["summary"].(map[string]any)
+	if rec.Code != http.StatusOK || int(summary["total"].(float64)) != 1 || int(summary["ok"].(float64)) != 1 || int(summary["fail"].(float64)) != 0 {
+		t.Fatalf("status/body=%d/%#v", rec.Code, body)
+	}
+	if len(service.calls) != 1 || len(service.calls[0]) != 1 || service.calls[0][0] != "active-token" {
+		t.Fatalf("refresh calls = %#v", service.calls)
+	}
+}
+
+func TestAdminBatchRefreshRejectsOnlyNonManageableExplicitTokens(t *testing.T) {
+	resetAdminRouterDepsForTest(t)
+	repo := &fakeAdminBatchRepo{accounts: map[string]adminAssetsAccount{
+		"disabled-token": {Token: "disabled-token", Status: "disabled"},
+	}}
+	service := &captureAdminBatchRefreshService{}
+	adminBatchRepoProvider = func() adminBatchRepository { return repo }
+	adminBatchRefreshServiceProvider = func() adminBatchRefreshService { return service }
+
+	rec := adminRequest(http.MethodPost, "/admin/api/batch/refresh", `{"tokens":["disabled-token"]}`, "Bearer gork")
+	body := decodeAdminBody(t, rec)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status/body=%d/%#v", rec.Code, body)
+	}
+	errBody := body["error"].(map[string]any)
+	if errBody["message"] != "No manageable tokens available" {
+		t.Fatalf("error body = %#v", errBody)
+	}
+	if len(service.calls) != 0 {
+		t.Fatalf("refresh calls = %#v", service.calls)
+	}
+}
+
+func TestAdminBatchRefreshSummarySeparatesExpiredAndTransient(t *testing.T) {
+	resetAdminRouterDepsForTest(t)
+	repo := &fakeAdminBatchRepo{accounts: map[string]adminAssetsAccount{
+		"tok-ok":        {Token: "tok-ok", Status: "active"},
+		"tok-expired":   {Token: "tok-expired", Status: "active"},
+		"tok-transient": {Token: "tok-transient", Status: "active"},
+	}}
+	adminBatchRepoProvider = func() adminBatchRepository { return repo }
+	adminBatchRefreshServiceProvider = func() adminBatchRefreshService {
+		return fakeAdminBatchRefreshService{results: map[string]adminBatchRefreshResult{
+			"tok-ok":        {Refreshed: 1},
+			"tok-expired":   {Expired: 1},
+			"tok-transient": {Failed: 1},
+		}}
+	}
+
+	rec := adminRequest(http.MethodPost, "/admin/api/batch/refresh", `{"tokens":["tok-ok","tok-expired","tok-transient"]}`, "Bearer gork")
+	body := decodeAdminBody(t, rec)
+	summary := body["summary"].(map[string]any)
+	if int(summary["ok"].(float64)) != 1 || int(summary["fail"].(float64)) != 2 {
+		t.Fatalf("summary = %#v", summary)
+	}
+	if int(summary["expired"].(float64)) != 1 || int(summary["transient"].(float64)) != 1 {
+		t.Fatalf("summary = %#v", summary)
+	}
+}
+
 func TestAdminBatchConcurrencyUsesQueryAndConfigFallback(t *testing.T) {
 	resetAdminRouterDepsForTest(t)
 	adminBatchConfigInt = func(key string, fallback int) int {
@@ -153,9 +231,9 @@ func TestAdminBatchConcurrencyUsesQueryAndConfigFallback(t *testing.T) {
 		t.Fatalf("fallback value/err=%d/%v", value, err)
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/admin/api/batch/refresh?concurrency=7", nil)
+	req = httptest.NewRequest(http.MethodPost, "/admin/api/batch/refresh?concurrency=120", nil)
 	value, err = adminBatchConcurrency(req, "batch.refresh_concurrency")
-	if err != nil || value != 7 {
+	if err != nil || value != 120 {
 		t.Fatalf("override value/err=%d/%v", value, err)
 	}
 
@@ -305,7 +383,9 @@ func TestAdminBatchRouteGoldenStatusHeadersAndShapes(t *testing.T) {
 	repo := &fakeAdminBatchRepo{pages: []adminAssetsListResult{{
 		Total: 1,
 		Items: []adminAssetsAccount{{Token: "tok-listed", Status: "active"}},
-	}}}
+	}}, accounts: map[string]adminAssetsAccount{
+		"tok-refresh": {Token: "tok-refresh", Status: "active"},
+	}}
 	adminBatchRepoProvider = func() adminBatchRepository { return repo }
 	adminBatchConfigInt = func(string, int) int { return 1 }
 	adminBatchNSFWSequence = func(context.Context, string) error { return nil }
@@ -423,8 +503,9 @@ func TestAdminBatchRouteGoldenStatusHeadersAndShapes(t *testing.T) {
 }
 
 type fakeAdminBatchRepo struct {
-	pages   []adminAssetsListResult
-	patches []adminBatchAccountPatch
+	pages    []adminAssetsListResult
+	accounts map[string]adminAssetsAccount
+	patches  []adminBatchAccountPatch
 }
 
 func (r *fakeAdminBatchRepo) ListAccounts(_ context.Context, query adminAssetsListQuery) (adminAssetsListResult, error) {
@@ -439,10 +520,37 @@ func (r *fakeAdminBatchRepo) PatchAccounts(_ context.Context, patches []adminBat
 	return adminTokensPatchResult{Patched: len(patches)}, nil
 }
 
+func (r *fakeAdminBatchRepo) GetAccounts(_ context.Context, tokens []string) ([]adminAssetsAccount, error) {
+	out := []adminAssetsAccount{}
+	for _, token := range tokens {
+		if account, ok := r.accounts[token]; ok {
+			out = append(out, account)
+		}
+	}
+	return out, nil
+}
+
 type fakeAdminBatchRefreshService struct {
 	refreshed map[string]int
+	results   map[string]adminBatchRefreshResult
 }
 
 func (s fakeAdminBatchRefreshService) RefreshTokens(_ context.Context, tokens []string) (adminBatchRefreshResult, error) {
+	if s.results != nil {
+		return s.results[tokens[0]], nil
+	}
 	return adminBatchRefreshResult{Refreshed: s.refreshed[tokens[0]]}, nil
+}
+
+type captureAdminBatchRefreshService struct {
+	results map[string]adminBatchRefreshResult
+	calls   [][]string
+}
+
+func (s *captureAdminBatchRefreshService) RefreshTokens(_ context.Context, tokens []string) (adminBatchRefreshResult, error) {
+	s.calls = append(s.calls, append([]string{}, tokens...))
+	if s.results != nil {
+		return s.results[tokens[0]], nil
+	}
+	return adminBatchRefreshResult{}, nil
 }

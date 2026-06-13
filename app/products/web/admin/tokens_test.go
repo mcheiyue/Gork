@@ -158,6 +158,57 @@ func TestAdminTokensImportAsyncAddAndReplace(t *testing.T) {
 	}
 }
 
+func TestAdminTokensImportSpecParsesAutoNSFW(t *testing.T) {
+	resetAdminRouterDepsForTest(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/tokens/import-async?auto_nsfw=true", strings.NewReader(`{"pool":"basic","tokens":["tok"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	spec, err := adminTokensImportSpecFromRequest(req)
+	if err != nil || !spec.AutoNSFW || spec.Pool != "basic" {
+		t.Fatalf("json spec=%#v err=%v", spec, err)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/admin/api/tokens/import-async", strings.NewReader("pool=super&tokens_text=tok&auto_nsfw=true"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	spec, err = adminTokensImportSpecFromRequest(req)
+	if err != nil || !spec.AutoNSFW || spec.Pool != "super" || spec.Text != "tok" {
+		t.Fatalf("form spec=%#v err=%v", spec, err)
+	}
+}
+
+func TestAdminTokensImportAsyncAutoNSFWUsesManageableImportedTokens(t *testing.T) {
+	resetAdminRouterDepsForTest(t)
+	repo := &fakeAdminTokensRepo{
+		accounts:       map[string]adminAssetsAccount{},
+		upsertStatuses: map[string]string{"auto-disabled": "disabled"},
+	}
+	refresh := &fakeAdminTokensRefresh{}
+	adminTokensRepoProvider = func() adminTokensRepository { return repo }
+	adminTokensRefreshServiceProvider = func() adminTokensRefreshService { return refresh }
+	adminTokensAsyncRunner = func(run func()) { run() }
+	var sequence []string
+	adminBatchNSFWSequence = func(_ context.Context, token string) error {
+		sequence = append(sequence, token)
+		return nil
+	}
+
+	rec := adminRequest(http.MethodPost, "/admin/api/tokens/import-async", `{"pool":"basic","mode":"add","tokens":["auto-active","auto-disabled"],"auto_nsfw":true}`, "Bearer gork")
+	body := decodeAdminBody(t, rec)
+	task := runtimepkg.GetTask(body["task_id"].(string))
+	if rec.Code != http.StatusOK || task == nil || task.FinalEvent()["type"] != "done" {
+		t.Fatalf("status/body/task=%d/%#v/%#v", rec.Code, body, task)
+	}
+	if len(refresh.imported) != 1 || len(refresh.imported[0]) != 2 {
+		t.Fatalf("refresh imported = %#v", refresh.imported)
+	}
+	if len(sequence) != 1 || sequence[0] != "auto-active" {
+		t.Fatalf("nsfw sequence = %#v", sequence)
+	}
+	if len(repo.patches) != 1 || len(repo.patches[0]) != 1 || repo.patches[0][0].Token != "auto-active" || repo.patches[0][0].AddTags[0] != "nsfw" {
+		t.Fatalf("patches = %#v", repo.patches)
+	}
+}
+
 func TestAdminTokensImportAsyncSurvivesRequestContextCancellation(t *testing.T) {
 	resetAdminRouterDepsForTest(t)
 	repo := &cancelAwareAdminTokensRepo{fakeAdminTokensRepo: fakeAdminTokensRepo{accounts: map[string]adminAssetsAccount{}}}
@@ -243,15 +294,16 @@ func TestAdminTokensRouteGoldenStatusHeadersAndShapes(t *testing.T) {
 }
 
 type fakeAdminTokensRepo struct {
-	listResults   []adminAssetsListResult
-	queries       []adminAssetsListQuery
-	facetSnapshot adminTokensFacetSnapshot
-	facetCalls    int
-	accounts      map[string]adminAssetsAccount
-	upserts       [][]adminTokensUpsert
-	patches       [][]adminBatchAccountPatch
-	deleted       [][]string
-	replaced      []adminTokensReplacePoolCommand
+	listResults    []adminAssetsListResult
+	queries        []adminAssetsListQuery
+	facetSnapshot  adminTokensFacetSnapshot
+	facetCalls     int
+	accounts       map[string]adminAssetsAccount
+	upsertStatuses map[string]string
+	upserts        [][]adminTokensUpsert
+	patches        [][]adminBatchAccountPatch
+	deleted        [][]string
+	replaced       []adminTokensReplacePoolCommand
 }
 
 func (r *fakeAdminTokensRepo) ListAccounts(_ context.Context, query adminAssetsListQuery) (adminAssetsListResult, error) {
@@ -281,6 +333,21 @@ func (r *fakeAdminTokensRepo) GetAccounts(_ context.Context, tokens []string) ([
 
 func (r *fakeAdminTokensRepo) UpsertAccounts(_ context.Context, upserts []adminTokensUpsert) (adminTokensPatchResult, error) {
 	r.upserts = append(r.upserts, upserts)
+	if r.accounts == nil {
+		r.accounts = map[string]adminAssetsAccount{}
+	}
+	for _, upsert := range upserts {
+		status := "active"
+		if r.upsertStatuses != nil && r.upsertStatuses[upsert.Token] != "" {
+			status = r.upsertStatuses[upsert.Token]
+		}
+		r.accounts[upsert.Token] = adminAssetsAccount{
+			Token:  upsert.Token,
+			Pool:   upsert.Pool,
+			Status: status,
+			Tags:   append([]string{}, upsert.Tags...),
+		}
+	}
 	return adminTokensPatchResult{Upserted: len(upserts), Patched: len(upserts)}, nil
 }
 

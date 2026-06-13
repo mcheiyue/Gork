@@ -932,6 +932,19 @@
       <button type="button" onclick="doExport()" id="btn-export" class="toolbar-icon-btn">
         <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
       </button>
+      <button type="button" onclick="batchNSFWAll()" id="btn-nsfw-all" class="row-nsfw-btn">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="7.25"/>
+          <text x="10" y="10.4">18</text>
+          <path d="M4.5 10h11"/>
+        </svg>
+      </button>
+      <button type="button" onclick="batchRefreshAllManageable()" id="btn-refresh-all" class="toolbar-icon-btn">
+        <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M20 11a8 8 0 0 0-14.6-4.6"/><path d="M4 4v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4.6"/><path d="M20 20v-5h-5"/><path d="M12 8v4l3 2"/></svg>
+      </button>
+      <button type="button" onclick="deleteAllInvalid()" id="btn-delete-invalid-all" class="toolbar-icon-btn toolbar-icon-btn-danger">
+        <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M5 7h14"/><path d="M9 7V4h6v3"/><path d="M8 10v7"/><path d="M12 10v7"/><path d="M16 10v7"/><path d="M7 7l1 13h8l1-13"/><path d="M12 2v2"/></svg>
+      </button>
       <button type="button" onclick="batchNSFW()" id="btn-nsfw" class="row-nsfw-btn" style="display:none">
         <svg viewBox="0 0 20 20" aria-hidden="true">
           <circle cx="10" cy="10" r="7.25"/>
@@ -1009,6 +1022,16 @@
         <span class="dialog-label" data-i18n="account.labelType">类型</span>
         <select class="input" id="import-pool" style="flex:1"></select>
       </div>
+      <div class="dialog-field">
+        <span class="dialog-label">NSFW</span>
+        <div style="flex:1">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="import-auto-nsfw" style="margin:0">
+            <span data-i18n="account.autoNsfwOnImport">导入后自动开启 NSFW</span>
+          </label>
+          <div style="font-size:12px;color:var(--fg-muted);margin-top:4px" data-i18n="account.autoNsfwHint">需要额外时间检测账户状态</div>
+        </div>
+      </div>
     </div>
     <div class="dialog-actions">
       <button onclick="closeModal('modal-import')" class="dialog-btn" data-i18n="account.cancel">取消</button>
@@ -1033,6 +1056,16 @@
       <div class="dialog-field" id="import-file-pool-row">
         <span class="dialog-label" data-i18n="account.labelType">类型</span>
         <select class="input" id="import-file-pool" style="flex:1"></select>
+      </div>
+      <div class="dialog-field">
+        <span class="dialog-label">NSFW</span>
+        <div style="flex:1">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="import-file-auto-nsfw" style="margin:0">
+            <span data-i18n="account.autoNsfwOnImport">导入后自动开启 NSFW</span>
+          </label>
+          <div style="font-size:12px;color:var(--fg-muted);margin-top:4px" data-i18n="account.autoNsfwHint">需要额外时间检测账户状态</div>
+        </div>
       </div>
     </div>
     <div class="dialog-actions">
@@ -1128,6 +1161,9 @@ function applyAccountI18n() {
   const toolbarTips = [
     ['btn-filter', 'account.filter', '筛选'],
     ['btn-export', 'account.export', '导出数据'],
+    ['btn-nsfw-all', 'account.batchNsfwAll', '全部开启 NSFW'],
+    ['btn-refresh-all', 'account.refreshAllManageable', '重新测试全部正常账户'],
+    ['btn-delete-invalid-all', 'account.deleteInvalidAll', '删除全部异常'],
     ['btn-nsfw', 'account.batchNsfw', '开启 NSFW'],
     ['btn-refresh', 'account.batchRefresh', '刷新选中'],
     ['btn-disable', 'account.batchDisable', '禁用选中'],
@@ -1316,6 +1352,10 @@ function isDisabledStatus(status) {
   return status === 'disabled';
 }
 
+function isManageableStatus(status) {
+  return status === 'active' || status === 'cooling';
+}
+
 function isInvalidStatus(status) {
   return !['active', 'cooling', 'disabled'].includes(status);
 }
@@ -1463,17 +1503,18 @@ function rowHtml(t) {
   const q      = t.quota || {};
   const isNsfw = (t.tags || []).includes('nsfw');
   const isDisabled = t.status === 'disabled';
+  const canManageNsfw = isManageableStatus(t.status);
   const isRefreshing = refreshingTokens.has(t.token);
   const success = t.use_count || 0;
   const fail = t.fail_count || 0;
   const nsfwBtn = isNsfw
-    ? `<button type="button" class="row-nsfw-btn is-on" data-nsfw-token="${xe(t.token)}" data-nsfw-enabled="false" data-tip="${xe(tr('account.batchNsfwDisable', null, '关闭 NSFW'))}" aria-label="${xe(tr('account.batchNsfwDisable', null, '关闭 NSFW'))}">
+    ? `<button type="button" class="row-nsfw-btn is-on" ${canManageNsfw ? `data-nsfw-token="${xe(t.token)}" data-nsfw-enabled="false"` : 'disabled'} data-tip="${xe(canManageNsfw ? tr('account.batchNsfwDisable', null, '关闭 NSFW') : tr('account.rowActionNotSupported', null, '当前状态不支持此操作'))}" aria-label="${xe(canManageNsfw ? tr('account.batchNsfwDisable', null, '关闭 NSFW') : tr('account.rowActionNotSupported', null, '当前状态不支持此操作'))}">
         <svg viewBox="0 0 20 20" aria-hidden="true">
           <circle cx="10" cy="10" r="7.25"/>
           <text x="10" y="10.4">18</text>
         </svg>
       </button>`
-    : `<button type="button" class="row-nsfw-btn" data-nsfw-token="${xe(t.token)}" data-nsfw-enabled="true" data-tip="${xe(tr('account.batchNsfw', null, '开启 NSFW'))}" aria-label="${xe(tr('account.batchNsfw', null, '开启 NSFW'))}">
+    : `<button type="button" class="row-nsfw-btn" ${canManageNsfw ? `data-nsfw-token="${xe(t.token)}" data-nsfw-enabled="true"` : 'disabled'} data-tip="${xe(canManageNsfw ? tr('account.batchNsfw', null, '开启 NSFW') : tr('account.rowActionNotSupported', null, '当前状态不支持此操作'))}" aria-label="${xe(canManageNsfw ? tr('account.batchNsfw', null, '开启 NSFW') : tr('account.rowActionNotSupported', null, '当前状态不支持此操作'))}">
         <svg viewBox="0 0 20 20" aria-hidden="true">
           <circle cx="10" cy="10" r="7.25"/>
           <text x="10" y="10.4">18</text>
@@ -1593,6 +1634,10 @@ function updateBatchBtns() {
   const show = sel.size > 0;
   ['btn-nsfw','btn-refresh','btn-disable','btn-restore','btn-delete'].forEach(id =>
     document.getElementById(id).style.display = show ? '' : 'none');
+  ['btn-export','btn-nsfw-all','btn-refresh-all','btn-delete-invalid-all','page-size-sel'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = show ? 'none' : '';
+  });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1676,11 +1721,13 @@ function openEdit(token) {
 async function doAdd() {
   const raw  = document.getElementById('import-tokens').value;
   const pool = document.getElementById('import-pool').value;
+  const autoNsfw = document.getElementById('import-auto-nsfw').checked;
   const newToks = raw.split('\n').map(s => s.trim()).filter(Boolean);
   if (!newToks.length) return showToast(tr('account.enterToken', null, '请输入 Token'), 'error');
   return saveTokens(
     pool,
     newToks,
+    autoNsfw,
     'modal-import',
     tr('account.adding', { n: newToks.length }, `正在添加 ${newToks.length} 个账户…`),
     tr('account.addDone', null, '添加完成'),
@@ -1692,9 +1739,11 @@ async function doImport() {
   const file = document.getElementById('import-file').files?.[0];
   if (!file) return showToast(tr('account.selectFile', null, '请选择文件'), 'error');
   const isJson = file.name.toLowerCase().endsWith('.json');
+  const autoNsfw = document.getElementById('import-file-auto-nsfw').checked;
   const form = new FormData();
   form.append('file', file);
   form.append('mode', isJson ? 'replace' : 'add');
+  form.append('auto_nsfw', autoNsfw ? 'true' : 'false');
   if (!isJson) form.append('pool', document.getElementById('import-file-pool').value);
   closeModal('modal-import-file');
   return _runTask(
@@ -1735,7 +1784,7 @@ function updateImportFileState() {
     : tr('account.importHintTxt', null, '每行一个 Token，将添加到所选类型');
 }
 
-async function saveTokens(pool, newToks, modalId, pendingMessage, successPrefix, errorPrefix) {
+async function saveTokens(pool, newToks, autoNsfw, modalId, pendingMessage, successPrefix, errorPrefix) {
   const unique = [...new Set(newToks)];
   try {
     const form = new FormData();
@@ -1744,7 +1793,7 @@ async function saveTokens(pool, newToks, modalId, pendingMessage, successPrefix,
     form.append('tokens_text', unique.join('\n'));
     closeModal(modalId);
     await _runTask(
-      () => _api('POST', '/tokens/import-async', form),
+      () => _api('POST', `/tokens/import-async?auto_nsfw=${autoNsfw ? 'true' : 'false'}`, form),
       pendingMessage,
       (_ok, _fail, summary) => {
         const skipped = summary?.skipped ?? 0;
@@ -1823,13 +1872,19 @@ function doDelete(tokens) {
 }
 function batchDeleteSel() { if (sel.size) doDelete([...sel]); }
 
+function deleteAllInvalid() {
+  const tokens = allTokens.filter(t => isInvalidStatus(t.status)).map(t => t.token);
+  if (!tokens.length) return showToast(tr('account.noInvalidAccounts', null, '没有异常账户可删除'), 'error');
+  doDelete(tokens);
+}
+
 // ── Batch SSE runner ───────────────────────────────────────────────────────
 let _batchTaskId = null;
 let _batchEs     = null;
 
 async function _runTask(starter, label, onDone, totalFallback = 0) {
   const btnCancel = document.getElementById('btn-batch-cancel');
-  ['btn-nsfw','btn-refresh','btn-disable','btn-restore','btn-delete'].forEach(id =>
+  ['btn-export','btn-nsfw-all','btn-refresh-all','btn-delete-invalid-all','page-size-sel','btn-nsfw','btn-refresh','btn-disable','btn-restore','btn-delete'].forEach(id =>
     document.getElementById(id).style.display = 'none');
   btnCancel.style.display = '';
 
@@ -1893,11 +1948,15 @@ async function _runTask(starter, label, onDone, totalFallback = 0) {
 
 async function _runBatch(endpoint, tokens, label, onDone) {
   return _runTask(
-    () => _api('POST', `${endpoint}?async=true`, { tokens }),
+    () => _api('POST', appendQuery(endpoint, 'async=true'), { tokens }),
     label,
     onDone,
     tokens.length,
   );
+}
+
+function appendQuery(url, param) {
+  return `${url}${url.includes('?') ? '&' : '?'}${param}`;
 }
 
 async function cancelBatch() {
@@ -2000,7 +2059,37 @@ async function batchRefreshSel() {
   if (!sel.size) return;
   await _runBatch('/batch/refresh', [...sel],
     tr('account.refreshing', { n: sel.size }, `正在刷新 ${sel.size} 个账户…`),
-    (ok, fail) => showToast(tr('account.refreshDone', { ok, fail }, `刷新完成：成功 ${ok}，失败 ${fail}`), 'success')
+    showRefreshBatchResult,
+  );
+}
+
+function showRefreshBatchResult(ok, fail, summary) {
+  const expired = summary?.expired ?? 0;
+  const transient = summary?.transient ?? Math.max(0, fail - expired);
+  let msg = `刷新完成：成功 ${ok}`;
+  if (expired > 0) msg += `，异常 ${expired}`;
+  if (transient > 0) msg += `，临时失败 ${transient}`;
+  showToast(msg, fail > 0 ? 'warning' : 'success');
+}
+
+function manageableTokens() {
+  return allTokens.filter(t => isManageableStatus(t.status)).map(t => t.token);
+}
+
+function selectedManageableTokens() {
+  return allTokens.filter(t => sel.has(t.token) && isManageableStatus(t.status)).map(t => t.token);
+}
+
+function batchRefreshAllManageable() {
+  const n = manageableTokens().length;
+  if (!n) return showToast(tr('account.noManageableAccounts', null, '没有可操作的可用账户'), 'error');
+  openConfirm(
+    tr('account.refreshAllConfirmTitle', null, '重新测试全部正常账户'),
+    tr('account.refreshAllConfirmBody', { n }, `重新测试全部 <b>${n}</b> 个正常/限流账户的运行状态？<br><small style="color:var(--fg-muted)">该操作会调用上游接口，并按当前批量并发配置执行。</small>`),
+    async () => _runBatch('/batch/refresh?all_manageable=true', [],
+      tr('account.refreshAllRunning', { n }, `正在重新测试 ${n} 个账户…`),
+      showRefreshBatchResult,
+    )
   );
 }
 
@@ -2021,13 +2110,27 @@ async function nsfwOne(token, enabled = true) {
 
 function batchNSFW() {
   if (!sel.size) return;
-  const tokens = [...sel];
+  const tokens = selectedManageableTokens();
+  if (!tokens.length) return showToast(tr('account.noManageableAccounts', null, '没有可操作的可用账户'), 'error');
   openConfirm(
     tr('account.nsfwConfirmTitle', null, '开启 NSFW'),
-    tr('account.nsfwConfirmBody', { n: tokens.length }, `为选中的 <b>${tokens.length}</b> 个账户开启 NSFW？`),
+    tr('account.nsfwConfirmBody', { n: tokens.length }, `为选中的 <b>${tokens.length}</b> 个正常/限流账户开启 NSFW？`),
     async () => _runBatch('/batch/nsfw', tokens,
       tr('account.nsfwEnabling', { n: tokens.length }, `正在为 ${tokens.length} 个账户开启 NSFW…`),
       (ok, fail) => showToast(tr('account.nsfwDone', { ok, fail }, `NSFW 完成：成功 ${ok}，失败 ${fail}`), 'success')
+    )
+  );
+}
+
+function batchNSFWAll() {
+  const n = manageableTokens().length;
+  if (!n) return showToast(tr('account.noManageableAccounts', null, '没有可操作的可用账户'), 'error');
+  openConfirm(
+    tr('account.nsfwAllConfirmTitle', null, '全部开启 NSFW'),
+    tr('account.nsfwAllConfirmBody', { n }, `为全部 <b>${n}</b> 个正常/限流账户开启 NSFW？<br><small style="color:var(--fg-muted)">该操作会按当前批量并发配置执行。</small>`),
+    async () => _runBatch('/batch/nsfw?all_manageable=true', [],
+      tr('account.nsfwAllEnabling', { n }, `正在为 ${n} 个账户开启 NSFW…`),
+      (ok, fail) => showToast(tr('account.nsfwDone', { ok, fail }, `NSFW 完成：成功 ${ok}，失败 ${fail}`), fail > 0 ? 'error' : 'success')
     )
   );
 }

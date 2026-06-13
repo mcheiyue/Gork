@@ -43,14 +43,24 @@ func handleAdminBatchRefresh(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, err)
 		return
 	}
+	repo, err := adminBatchRepo()
+	if err != nil {
+		writeAdminError(w, err)
+		return
+	}
 	req, options, err := decodeAdminBatchRequest(r, "batch.refresh_concurrency")
 	if err != nil {
 		writeAdminError(w, err)
 		return
 	}
-	tokens := adminBatchTrimTokens(req.Tokens)
-	if len(tokens) == 0 {
-		writeAdminError(w, platform.NewValidationError("No tokens provided", "tokens", ""))
+	allManageable, err := adminBatchBoolQuery(r, "all_manageable", false)
+	if err != nil {
+		writeAdminError(w, err)
+		return
+	}
+	tokens, err := adminBatchRefreshTokens(r.Context(), repo, req.Tokens, allManageable)
+	if err != nil {
+		writeAdminError(w, err)
 		return
 	}
 	handler := func(ctx context.Context, token string) (map[string]any, error) {

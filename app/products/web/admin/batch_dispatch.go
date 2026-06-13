@@ -27,7 +27,7 @@ func adminBatchDispatchSync(tokens []string, handler adminBatchHandler, concurre
 	wrapped := func(ctx context.Context, token string) (adminBatchItemResult, error) {
 		data, err := handler(ctx, token)
 		if err != nil {
-			return adminBatchItemResult{Token: token, Error: err.Error()}, nil
+			return adminBatchItemResult{Token: token, Error: err.Error(), ErrorClass: adminBatchErrorClass(err)}, nil
 		}
 		return adminBatchItemResult{Token: token, Data: data}, nil
 	}
@@ -75,6 +75,7 @@ func runAdminBatchTaskItem(task *runtimepkg.AsyncTask, handler adminBatchHandler
 	*out = adminBatchItemResult{Token: token, Data: data}
 	if err != nil {
 		out.Error = err.Error()
+		out.ErrorClass = adminBatchErrorClass(err)
 	}
 	adminBatchRecordTaskItem(task, *out)
 }
@@ -97,7 +98,7 @@ func finishAdminBatchTask(task *runtimepkg.AsyncTask, tokens []string, results [
 
 func adminBatchResultPayload(tokens []string, raw []adminBatchItemResult) map[string]any {
 	results := map[string]any{}
-	okCount, failCount := 0, 0
+	okCount, failCount, expiredCount, transientCount := 0, 0, 0, 0
 	for _, item := range raw {
 		if item.Token == "" {
 			continue
@@ -108,11 +109,17 @@ func adminBatchResultPayload(tokens []string, raw []adminBatchItemResult) map[st
 			continue
 		}
 		failCount++
+		switch item.ErrorClass {
+		case "expired":
+			expiredCount++
+		case "transient":
+			transientCount++
+		}
 		results[adminAssetMask(item.Token)] = map[string]any{"error": item.Error}
 	}
 	return map[string]any{
 		"status":  "success",
-		"summary": map[string]any{"total": len(tokens), "ok": okCount, "fail": failCount},
+		"summary": map[string]any{"total": len(tokens), "ok": okCount, "fail": failCount, "expired": expiredCount, "transient": transientCount},
 		"results": results,
 	}
 }

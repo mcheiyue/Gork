@@ -7,7 +7,7 @@ import (
 	runtimepkg "github.com/dslzl/gork/app/platform/runtime"
 )
 
-func adminTokensRunAddImport(ctx context.Context, repo adminTokensRepository, refresh adminTokensRefreshService, task *runtimepkg.AsyncTask, pool string, tokens []string, tags []string) {
+func adminTokensRunAddImport(ctx context.Context, repo adminTokensRepository, refresh adminTokensRefreshService, task *runtimepkg.AsyncTask, pool string, tokens []string, tags []string, autoNSFW bool) {
 	defer adminTokensExpireTask(task)
 	saved, skipped := 0, 0
 	refreshTokens := []string{}
@@ -34,10 +34,10 @@ func adminTokensRunAddImport(ctx context.Context, repo adminTokensRepository, re
 		}
 		task.Record(true, runtimepkg.TaskRecordOptions{Count: len(chunk), Detail: map[string]any{"saved": saved, "skipped": skipped}})
 	}
-	adminTokensFinishImport(ctx, refresh, task, refreshTokens, map[string]any{"mode": "add", "total": len(tokens), "ok": saved, "saved": saved, "fail": 0, "skipped": skipped})
+	adminTokensFinishImport(ctx, repo, refresh, task, refreshTokens, autoNSFW, map[string]any{"mode": "add", "total": len(tokens), "ok": saved, "saved": saved, "fail": 0, "skipped": skipped})
 }
 
-func adminTokensRunReplaceImport(ctx context.Context, repo adminTokensRepository, refresh adminTokensRefreshService, task *runtimepkg.AsyncTask, payload map[string][]adminTokensUpsert) {
+func adminTokensRunReplaceImport(ctx context.Context, repo adminTokensRepository, refresh adminTokensRefreshService, task *runtimepkg.AsyncTask, payload map[string][]adminTokensUpsert, autoNSFW bool) {
 	defer adminTokensExpireTask(task)
 	saved := 0
 	refreshTokens := []string{}
@@ -57,7 +57,7 @@ func adminTokensRunReplaceImport(ctx context.Context, repo adminTokensRepository
 		}
 		task.Record(true, runtimepkg.TaskRecordOptions{Count: len(upserts), Detail: map[string]any{"pool": pool, "saved": saved}})
 	}
-	adminTokensFinishImport(ctx, refresh, task, refreshTokens, map[string]any{"mode": "replace", "total": len(refreshTokens), "ok": saved, "saved": saved, "fail": 0, "skipped": 0})
+	adminTokensFinishImport(ctx, repo, refresh, task, refreshTokens, autoNSFW, map[string]any{"mode": "replace", "total": len(refreshTokens), "ok": saved, "saved": saved, "fail": 0, "skipped": 0})
 }
 
 func adminTokensImportNewTokens(ctx context.Context, repo adminTokensRepository, chunk []string) ([]string, error) {
@@ -68,14 +68,43 @@ func adminTokensImportNewTokens(ctx context.Context, repo adminTokensRepository,
 	return adminTokensNewOnly(chunk, records), nil
 }
 
-func adminTokensFinishImport(ctx context.Context, refresh adminTokensRefreshService, task *runtimepkg.AsyncTask, tokens []string, result map[string]any) {
+func adminTokensFinishImport(ctx context.Context, repo adminTokensRepository, refresh adminTokensRefreshService, task *runtimepkg.AsyncTask, tokens []string, autoNSFW bool, result map[string]any) {
 	if len(tokens) > 0 {
 		if _, err := refresh.RefreshOnImport(ctx, tokens); err != nil {
 			task.FailTask(err.Error())
 			return
 		}
 	}
+	if autoNSFW {
+		count, err := adminTokensEnableAutoNSFW(ctx, repo, tokens)
+		if err != nil {
+			task.FailTask(err.Error())
+			return
+		}
+		result["nsfw"] = count
+	}
 	task.Finish(map[string]any{"status": "success", "summary": result})
+}
+
+func adminTokensEnableAutoNSFW(ctx context.Context, repo adminTokensRepository, tokens []string) (int, error) {
+	if len(tokens) == 0 {
+		return 0, nil
+	}
+	records, err := repo.GetAccounts(ctx, tokens)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, record := range records {
+		if !adminAssetAccountManageable(record) {
+			continue
+		}
+		if _, err := adminBatchNSFWOne(ctx, repo, record.Token, true); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
 }
 
 func adminTokensChunk(tokens []string, start int) []string {
