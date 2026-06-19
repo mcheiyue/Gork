@@ -22,11 +22,33 @@ var consoleStreamPosterFactory = func() protocol.ConsoleStreamPoster {
 	return consoleHTTPPoster{}
 }
 
+var getProxyDirectory = func(ctx context.Context) (*controlproxy.ProxyDirectory, error) {
+	return controlproxy.GetProxyDirectory(ctx)
+}
+
 func StreamConsoleChat(ctx context.Context, token string, payload map[string]any, timeoutS float64) ([]protocol.ConsoleStreamEvent, error) {
+	var proxyOpt protocol.ConsoleProxy
+	dir, err := getProxyDirectory(ctx)
+	if err == nil {
+		proxyOpt = &consoleProxyAdapter{dir: dir}
+	}
 	return protocol.StreamConsoleChat(ctx, token, payload, protocol.ConsoleStreamOptions{
+		Proxy:    proxyOpt,
 		Poster:   consoleStreamPosterFactory(),
 		TimeoutS: timeoutS,
 	})
+}
+
+type consoleProxyAdapter struct {
+	dir *controlproxy.ProxyDirectory
+}
+
+func (a *consoleProxyAdapter) Acquire(ctx context.Context) (controlproxy.ProxyLease, error) {
+	return a.dir.Acquire(ctx)
+}
+
+func (a *consoleProxyAdapter) Feedback(ctx context.Context, lease controlproxy.ProxyLease, feedback controlproxy.ProxyFeedback) error {
+	return a.dir.Feedback(ctx, lease, feedback)
 }
 
 type consoleHTTPPoster struct{}

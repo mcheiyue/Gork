@@ -7,8 +7,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
+	"time"
+
+	controlproxy "github.com/dslzl/gork/app/control/proxy"
+	"golang.org/x/net/proxy"
 )
 
 type netHTTPClient struct{}
@@ -35,7 +41,8 @@ func doHTTPRequest(ctx context.Context, method string, request HTTPRequest) (HTT
 	for key, value := range request.Headers {
 		rawRequest.Header.Set(key, value)
 	}
-	response, err := http.DefaultClient.Do(rawRequest)
+	client := httpClientForLease(request.Lease, request.Timeout)
+	response, err := client.Do(rawRequest)
 	if err != nil {
 		cancel()
 		return HTTPResponse{}, err
@@ -111,4 +118,48 @@ func httpRequestURL(request HTTPRequest) string {
 	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String()
+}
+
+// httpClientForLease returns an *http.Client that routes through the SOCKS5 proxy
+// specified in the lease. If the lease has no proxy, it returns http.DefaultClient.
+func httpClientForLease(lease *controlproxy.ProxyLease, timeout time.Duration) *http.Client {
+	if lease == nil || lease.ProxyURL == nil || *lease.ProxyURL == "" {
+		return http.DefaultClient
+	}
+	proxyURL := *lease.ProxyURL
+	if strings.HasPrefix(proxyURL, "socks5h://") {
+		proxyURL = "socks5://" + proxyURL[len("socks5h://"):]
+	} else if strings.HasPrefix(proxyURL, "socks4a://") {
+		proxyURL = "socks4://" + proxyURL[len("socks4a://"):]
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil {
+		return http.DefaultClient
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if !strings.HasPrefix(scheme, "socks") {
+		return &http.Client{
+			Timeout: timeout,
+			Transport: &http.Transport{
+				Proxy: http.ProxyURL(parsed),
+			},
+		}
+	}
+	auth := &proxy.Auth{}
+	if parsed.User != nil {
+		auth.User = parsed.User.Username()
+		auth.Password, _ = parsed.User.Password()
+	}
+	dialer, err := proxy.SOCKS5("tcp", parsed.Host, auth, proxy.Direct)
+	if err != nil {
+		return http.DefaultClient
+	}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialer.(proxy.ContextDialer).DialContext(ctx, network, addr)
+			},
+		},
+	}
 }
