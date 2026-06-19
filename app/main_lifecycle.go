@@ -11,6 +11,7 @@ import (
 	accountbackends "github.com/dslzl/gork/app/control/account/backends"
 	proxycontrol "github.com/dslzl/gork/app/control/proxy"
 	accountdataplane "github.com/dslzl/gork/app/dataplane/account"
+	platformconfig "github.com/dslzl/gork/app/platform/config"
 	platformruntime "github.com/dslzl/gork/app/platform/runtime"
 	platformstorage "github.com/dslzl/gork/app/platform/storage"
 	openaiproduct "github.com/dslzl/gork/app/products/openai"
@@ -23,6 +24,33 @@ type appMainLifecycleState struct {
 	directory    *accountdataplane.AccountDirectory
 	schedulerKey *platformruntime.RedisRuntimeLease
 	adminCleanup func()
+}
+
+type mainLifecycleConfigAdapter struct{}
+
+func (mainLifecycleConfigAdapter) GetString(key, defaultValue string) string {
+	return platformconfig.GlobalConfig.GetStr(key, defaultValue)
+}
+
+func (mainLifecycleConfigAdapter) GetList(key string, defaultValue []string) []string {
+	anyList := platformconfig.GlobalConfig.GetList(key, nil)
+	if len(anyList) == 0 {
+		return defaultValue
+	}
+	result := make([]string, 0, len(anyList))
+	for _, v := range anyList {
+		if s, ok := v.(string); ok {
+			result = append(result, s)
+		}
+	}
+	if len(result) == 0 {
+		return defaultValue
+	}
+	return result
+}
+
+func (mainLifecycleConfigAdapter) GetInt(key string, defaultValue int) int {
+	return platformconfig.GlobalConfig.GetInt(key, defaultValue)
 }
 
 type appMainLifecycleStep func(context.Context, *appMainLifecycleState) (Hook, error)
@@ -354,7 +382,9 @@ func defaultAppMainStartProxyScheduler(ctx context.Context, _ *appMainLifecycleS
 	if !accountcontrol.IsRefreshSchedulerLeader() {
 		return nil, nil
 	}
-	directory, err := proxycontrol.GetProxyDirectory(ctx)
+	directory, err := proxycontrol.GetProxyDirectory(ctx, proxycontrol.DirectoryOptions{
+		Config: mainLifecycleConfigAdapter{},
+	})
 	if err != nil {
 		return nil, err
 	}
