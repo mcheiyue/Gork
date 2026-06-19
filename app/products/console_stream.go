@@ -29,7 +29,9 @@ var getProxyDirectory = func(ctx context.Context) (*controlproxy.ProxyDirectory,
 func StreamConsoleChat(ctx context.Context, token string, payload map[string]any, timeoutS float64) ([]protocol.ConsoleStreamEvent, error) {
 	var proxyOpt protocol.ConsoleProxy
 	dir, err := getProxyDirectory(ctx)
-	if err == nil {
+	if err != nil {
+		logging.Logger.Warn("proxy directory unavailable, proceeding without proxy", "error", err)
+	} else {
 		proxyOpt = &consoleProxyAdapter{dir: dir}
 	}
 	return protocol.StreamConsoleChat(ctx, token, payload, protocol.ConsoleStreamOptions{
@@ -44,7 +46,15 @@ type consoleProxyAdapter struct {
 }
 
 func (a *consoleProxyAdapter) Acquire(ctx context.Context) (controlproxy.ProxyLease, error) {
-	return a.dir.Acquire(ctx)
+	lease, err := a.dir.Acquire(ctx)
+	if err != nil {
+		logging.Logger.Warn("proxy lease acquire failed", "error", err)
+	} else if lease.ProxyURL != nil {
+		logging.Logger.Info("proxy lease acquired", "proxy", *lease.ProxyURL)
+	} else {
+		logging.Logger.Info("proxy lease acquired (direct)")
+	}
+	return lease, err
 }
 
 func (a *consoleProxyAdapter) Feedback(ctx context.Context, lease controlproxy.ProxyLease, feedback controlproxy.ProxyFeedback) error {
