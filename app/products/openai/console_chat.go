@@ -2,6 +2,8 @@ package openai
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"github.com/dslzl/gork/app/control/model"
 	"github.com/dslzl/gork/app/dataplane/reverse/protocol"
@@ -29,6 +31,14 @@ func ConsoleCompletions(ctx context.Context, options chatCompletionOptions) (cha
 	if err != nil {
 		return chatCompletionResult{}, err
 	}
+
+	// Check team-level circuit breaker before attempting
+	if consoleCircuitBreaker.blocked() {
+		remaining := consoleCircuitBreaker.remainingCooldown()
+		return chatCompletionResult{}, platform.NewRateLimitError(
+			"Console rate limit cooldown active, retry after " + remaining.Truncate(time.Second).String())
+	}
+
 	directory := chatDirectoryProvider()
 	if directory == nil {
 		return chatCompletionResult{}, platform.NewRateLimitError("Account directory not initialised")
@@ -60,6 +70,13 @@ func ConsoleCompletions(ctx context.Context, options chatCompletionOptions) (cha
 			return result, nil
 		}
 		lastErr = err
+
+		// Trip circuit breaker on 429 - don't retry, fail fast
+		if isConsoleRateLimitError(err) {
+			consoleCircuitBreaker.trip()
+			return chatCompletionResult{}, err
+		}
+
 		if shouldRetryUpstream(err, retryCodes) && attempt < maxRetries {
 			excluded = append(excluded, account.Token)
 			if waitErr := waitBeforeChatRetry(ctx, attempt); waitErr != nil {
@@ -272,4 +289,12 @@ func intFromAny(value any) int {
 	default:
 		return 0
 	}
+}
+
+func isConsoleRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "429") || strings.Contains(msg, "rate_limit") || strings.Contains(msg, "resource-exhausted")
 }

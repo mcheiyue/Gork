@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"time"
 
 	"github.com/dslzl/gork/app/control/model"
 	"github.com/dslzl/gork/app/dataplane/reverse/protocol"
@@ -27,6 +28,13 @@ func ConsoleResponses(ctx context.Context, options consoleResponseOptions) (chat
 	if err != nil {
 		return chatCompletionResult{}, err
 	}
+
+	if consoleCircuitBreaker.blocked() {
+		remaining := consoleCircuitBreaker.remainingCooldown()
+		return chatCompletionResult{}, platform.NewRateLimitError(
+			"Console rate limit cooldown active, retry after " + remaining.Truncate(time.Second).String())
+	}
+
 	directory := chatDirectoryProvider()
 	if directory == nil {
 		return chatCompletionResult{}, platform.NewRateLimitError("Account directory not initialised")
@@ -64,6 +72,12 @@ func ConsoleResponses(ctx context.Context, options consoleResponseOptions) (chat
 			return result, nil
 		}
 		lastErr = err
+
+		if isConsoleRateLimitError(err) {
+			consoleCircuitBreaker.trip()
+			return chatCompletionResult{}, err
+		}
+
 		if shouldRetryUpstream(err, retryCodes) && attempt < maxRetries {
 			excluded = append(excluded, account.Token)
 			if waitErr := waitBeforeChatRetry(ctx, attempt); waitErr != nil {
