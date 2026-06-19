@@ -2,7 +2,7 @@ package openai
 
 import (
 	"context"
-	"strings"
+	"math/rand"
 	"time"
 
 	"github.com/dslzl/gork/app/control/model"
@@ -30,13 +30,6 @@ func ConsoleCompletions(ctx context.Context, options chatCompletionOptions) (cha
 	spec, err := model.Resolve(options.Model)
 	if err != nil {
 		return chatCompletionResult{}, err
-	}
-
-	// Check team-level circuit breaker before attempting
-	if consoleCircuitBreaker.blocked() {
-		remaining := consoleCircuitBreaker.remainingCooldown()
-		return chatCompletionResult{}, platform.NewRateLimitError(
-			"Console rate limit cooldown active, retry after " + remaining.Truncate(time.Second).String())
 	}
 
 	directory := chatDirectoryProvider()
@@ -71,9 +64,19 @@ func ConsoleCompletions(ctx context.Context, options chatCompletionOptions) (cha
 		}
 		lastErr = err
 
-		// Trip circuit breaker on 429 - don't retry, fail fast
+		// On 429: random delay 1-5s, then retry (don't block, compete for shared quota)
 		if isConsoleRateLimitError(err) {
-			consoleCircuitBreaker.trip()
+			consoleCircuitBreaker.trip() // Log only, no blocking
+			if attempt < maxRetries {
+				delay := time.Duration(1000+rand.Intn(4000)) * time.Millisecond // 1-5s
+				select {
+				case <-time.After(delay):
+					excluded = append(excluded, account.Token)
+					continue
+				case <-ctx.Done():
+					return chatCompletionResult{}, ctx.Err()
+				}
+			}
 			return chatCompletionResult{}, err
 		}
 
@@ -289,12 +292,4 @@ func intFromAny(value any) int {
 	default:
 		return 0
 	}
-}
-
-func isConsoleRateLimitError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "429") || strings.Contains(msg, "rate_limit") || strings.Contains(msg, "resource-exhausted")
 }

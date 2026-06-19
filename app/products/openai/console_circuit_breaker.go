@@ -1,17 +1,19 @@
 package openai
 
 import (
+	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
 
-// consoleTeamCircuitBreaker prevents thundering herd when console.x.ai returns 429.
-// Since the rate limit is team-level (not account-level), retrying with a different
-// account is useless. Instead, we fail fast during a cooldown period.
+// consoleTeamCircuitBreaker tracks 429 state for logging/monitoring only.
+// Since the rate limit is team-level (60 req/min shared), we do NOT block requests.
+// Instead, we retry with random delays to compete for the shared quota.
 type consoleTeamCircuitBreaker struct {
-	mu            sync.Mutex
-	cooldownUntil time.Time
-	cooldownSec   int
+	mu          sync.Mutex
+	last429Time time.Time
+	cooldownSec int
 }
 
 func newConsoleTeamCircuitBreaker(cooldownSec int) *consoleTeamCircuitBreaker {
@@ -23,59 +25,40 @@ func newConsoleTeamCircuitBreaker(cooldownSec int) *consoleTeamCircuitBreaker {
 	}
 }
 
-// blocked returns true if we're still in cooldown period after a 429.
+// blocked always returns false - we never block, just log and retry.
 func (cb *consoleTeamCircuitBreaker) blocked() bool {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	if cb.cooldownUntil.IsZero() {
-		return false
-	}
-	if time.Now().Before(cb.cooldownUntil) {
-		return true
-	}
-	// Cooldown expired, reset
-	cb.cooldownUntil = time.Time{}
 	return false
 }
 
-// remainingCooldown returns how long until the cooldown expires.
+// remainingCooldown always returns 0 - we never block.
 func (cb *consoleTeamCircuitBreaker) remainingCooldown() time.Duration {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	if cb.cooldownUntil.IsZero() {
-		return 0
-	}
-	remaining := time.Until(cb.cooldownUntil)
-	if remaining < 0 {
-		return 0
-	}
-	return remaining
+	return 0
 }
 
-// trip sets the cooldown timer after a 429 response.
+// trip records the 429 event for logging, but does NOT block future requests.
 func (cb *consoleTeamCircuitBreaker) trip() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
-	// Only extend cooldown, never shorten it
-	newCooldown := time.Now().Add(time.Duration(cb.cooldownSec) * time.Second)
-	if newCooldown.After(cb.cooldownUntil) {
-		cb.cooldownUntil = newCooldown
-	}
+	cb.last429Time = time.Now()
+	slog.Warn("console circuit breaker: 429 detected, will retry with random delay")
 }
 
-// tripFromRetryAfter sets cooldown based on Retry-After header value (seconds).
+// tripFromRetryAfter records 429 with retry-after info for logging.
 func (cb *consoleTeamCircuitBreaker) tripFromRetryAfter(retryAfterSec int) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
-	cooldown := time.Duration(cb.cooldownSec) * time.Second
-	if retryAfterSec > 0 {
-		cooldown = time.Duration(retryAfterSec) * time.Second
-	}
-	newCooldown := time.Now().Add(cooldown)
-	if newCooldown.After(cb.cooldownUntil) {
-		cb.cooldownUntil = newCooldown
-	}
+	cb.last429Time = time.Now()
+	slog.Warn("console circuit breaker: 429 detected", "retry_after_sec", retryAfterSec)
 }
 
-// Global console circuit breaker - 60 second cooldown by default
+// isConsoleRateLimitError checks if the error is a 429 rate limit error.
+func isConsoleRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "429") || strings.Contains(msg, "rate_limit") || strings.Contains(msg, "resource-exhausted")
+}
+
+// Global console circuit breaker - tracking only, no blocking
 var consoleCircuitBreaker = newConsoleTeamCircuitBreaker(60)
