@@ -27,11 +27,13 @@ var getProxyDirectory = func(ctx context.Context) (*controlproxy.ProxyDirectory,
 }
 
 func StreamConsoleChat(ctx context.Context, token string, payload map[string]any, timeoutS float64) ([]protocol.ConsoleStreamEvent, error) {
+	logging.Logger.Info("StreamConsoleChat called", "token_len", len(token))
 	var proxyOpt protocol.ConsoleProxy
 	dir, err := getProxyDirectory(ctx)
 	if err != nil {
 		logging.Logger.Warn("proxy directory unavailable, proceeding without proxy", "error", err)
 	} else {
+		logging.Logger.Info("proxy directory acquired", "node_count", dir.NodeCount())
 		proxyOpt = &consoleProxyAdapter{dir: dir}
 	}
 	return protocol.StreamConsoleChat(ctx, token, payload, protocol.ConsoleStreamOptions{
