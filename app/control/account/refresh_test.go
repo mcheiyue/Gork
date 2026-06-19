@@ -246,7 +246,7 @@ func TestRefreshCallAsyncConsoleStartsResetTimerAtThreshold(t *testing.T) {
 	refreshNowMS = func() int64 { return 3000 }
 	t.Cleanup(func() { refreshNowMS = oldNow })
 	quota := DefaultQuotaSet("basic")
-	quota.Console.Remaining = 16
+	quota.Console.Remaining = 13
 	quota.Console.ResetAt = nil
 	record := AccountRecord{Token: "tok-console-threshold", Pool: "basic", Status: AccountStatusActive, Quota: quota.ToDict()}
 	repo := &fakeRefreshRepo{records: []AccountRecord{record}}
@@ -257,7 +257,7 @@ func TestRefreshCallAsyncConsoleStartsResetTimerAtThreshold(t *testing.T) {
 	}
 
 	patch := repo.patches[0]
-	if patch.QuotaConsole["remaining"] != 15 || patch.QuotaConsole["reset_at"] != int64(1803000) {
+	if patch.QuotaConsole["remaining"] != 12 || patch.QuotaConsole["reset_at"] != int64(3603000) {
 		t.Fatalf("console threshold quota patch = %#v", patch.QuotaConsole)
 	}
 }
@@ -296,7 +296,7 @@ func TestResetExpiredConsoleWindowsRestoresDefaultQuota(t *testing.T) {
 		t.Fatalf("reset patches = %#v", repo.patches)
 	}
 	patch := repo.patches[0].QuotaConsole
-	if patch["remaining"] != 30 || patch["total"] != 30 || patch["reset_at"] != nil || patch["source"] != int(QuotaSourceDefault) {
+	if patch["remaining"] != 20 || patch["total"] != 20 || patch["reset_at"] != nil || patch["source"] != int(QuotaSourceDefault) {
 		t.Fatalf("reset console quota patch = %#v", patch)
 	}
 }

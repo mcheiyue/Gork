@@ -10,7 +10,7 @@ func TestDefaultQuotaSetValuesAndFreshCopy(t *testing.T) {
 	if basic.Auto.Total != 0 || basic.Fast.Total != 30 || basic.Fast.WindowSeconds != 1800 {
 		t.Fatalf("basic defaults = %#v", basic)
 	}
-	if basic.Expert.Total != 0 || basic.Console == nil || basic.Console.Total != 30 || basic.Console.WindowSeconds != 1800 {
+	if basic.Expert.Total != 0 || basic.Console == nil || basic.Console.Total != 20 || basic.Console.WindowSeconds != 3600 {
 		t.Fatalf("basic optional defaults = %#v", basic)
 	}
 	if basic.Heavy != nil || basic.Grok43 != nil {
@@ -129,7 +129,7 @@ func TestNormalizeQuotaWindowAndSet(t *testing.T) {
 	}
 	input.Console = nil
 	normalized = NormalizeQuotaSet("basic", input)
-	if normalized.Console == nil || normalized.Console.Total != 30 || normalized.Console.WindowSeconds != 1800 {
+	if normalized.Console == nil || normalized.Console.Total != 20 || normalized.Console.WindowSeconds != 3600 {
 		t.Fatalf("NormalizeQuotaSet basic missing console should fall back to default, got %#v", normalized.Console)
 	}
 	normalized = NormalizeQuotaSet("super", input)
