@@ -27,9 +27,12 @@ var defaultDynamicConsoleModels = newDynamicConsoleModelSource(dynamicConsoleMod
 	FailureTTL: 30 * time.Second,
 })
 
-func init() {
-	model.SetDynamicProvider(defaultDynamicConsoleModels.List)
-}
+// Disabled: dynamic models from console.x.ai are all marked as TierBasic
+// but many actually require Super/Heavy accounts, causing confusing failures.
+// Only expose static models from registry.go which have correct tier info.
+// func init() {
+// 	model.SetDynamicProvider(defaultDynamicConsoleModels.List)
+// }
 
 type dynamicConsoleHTTPClient interface {
 	Do(*http.Request) (*http.Response, error)
