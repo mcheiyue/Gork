@@ -11,6 +11,7 @@ import (
 	accountbackends "github.com/dslzl/gork/app/control/account/backends"
 	proxycontrol "github.com/dslzl/gork/app/control/proxy"
 	accountdataplane "github.com/dslzl/gork/app/dataplane/account"
+	"github.com/dslzl/gork/app/dataplane/reverse/transport"
 	platformconfig "github.com/dslzl/gork/app/platform/config"
 	platformruntime "github.com/dslzl/gork/app/platform/runtime"
 	platformstorage "github.com/dslzl/gork/app/platform/storage"
@@ -248,6 +249,7 @@ func defaultAppMainStartRefreshRuntime(ctx context.Context, state *appMainLifecy
 		return nil, nil
 	}
 	service := accountcontrol.NewAccountRefreshService(state.repository, accountcontrol.AccountRefreshOptions{
+		Fetcher:          transport.HTTPUsageFetcher{},
 		SSOModelVerifier: accountcontrol.SSOModelVerifierFunc(openaiproduct.ProbeConsoleListModels),
 	})
 	scheduler := accountcontrol.GetAccountRefreshScheduler(service)
