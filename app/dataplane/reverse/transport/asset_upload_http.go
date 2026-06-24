@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"io"
 	"net/http"
@@ -36,6 +37,15 @@ func doAssetHTTPRequest(ctx context.Context, method string, rawURL string, heade
 	responseBody, err := io.ReadAll(response.Body)
 	if err != nil {
 		return AssetHTTPResponse{}, err
+	}
+	if response.Header.Get("Content-Encoding") == "gzip" && len(responseBody) >= 2 && responseBody[0] == 0x1f && responseBody[1] == 0x8b {
+		reader, err := gzip.NewReader(bytes.NewReader(responseBody))
+		if err == nil {
+			if decompressed, err := io.ReadAll(reader); err == nil {
+				responseBody = decompressed
+			}
+			reader.Close()
+		}
 	}
 	return AssetHTTPResponse{
 		StatusCode: response.StatusCode,
