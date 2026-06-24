@@ -75,6 +75,7 @@ func ConsoleCompletions(ctx context.Context, options chatCompletionOptions) (cha
 		if isConsoleRateLimitError(err) {
 			errBody := err.Error()
 			info := parseConsole429Info(errBody)
+			slog.Info("console 429 parsed", "per_second_hit", info.IsPerSecondHit, "per_minute_hit", info.IsPerMinuteHit, "ps_actual", info.PerSecondActual, "pm_actual", info.PerMinuteActual)
 			consoleCircuitBreaker.trip()
 
 			if attempt < maxRetries {
