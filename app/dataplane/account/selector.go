@@ -15,9 +15,11 @@ const (
 	weightRecent   = 15.0
 	weightInflight = 20.0
 	weightFail     = 4.0
-	recentWindowS  = 15
+	recentWindowS  = 60 // 覆盖 grok-4.3 思考时长（典型 30-60s），强制账号轮换
 
 	defaultMaxInflight = 8
+	quotaMaxInflight   = 12 // quota 策略下单账号最多 12 个并发请求，防止单账号堆积引发上游风控
+	randomMaxFails     = 5  // random 策略下，累计失败 >= 5 次的账号暂时不选
 )
 
 var selectorState = struct {
@@ -72,9 +74,13 @@ func quotaSelect(table *AccountRuntimeTable, poolID int, modeID int, options Sel
 	totalCol := table.totalCol(modeID)
 	windowCol := table.windowCol(modeID)
 	maybeResetWindows(table, candidates, modeID, resetCol, quotaCol, totalCol, windowCol, poolID, options.NowS)
+	// inflight 硬上限过滤，避免单账号堆积导致上游风控
 	working := map[int]bool{}
 	for idx := range candidates {
 		if options.ExcludeIdxs[idx] || quotaCol[idx] <= 0 {
+			continue
+		}
+		if table.InflightByIdx[idx] >= quotaMaxInflight {
 			continue
 		}
 		working[idx] = true
@@ -115,9 +121,8 @@ func maybeResetWindows(
 	poolID int,
 	nowS int,
 ) {
-	if poolID != 0 {
-		return
-	}
+	// 扩展到所有 pool：原仅对 basic 池生效；扩展到 super/heavy 后，
+	// 在 refresh scheduler 卡死或上游不可达时也能本地兜底重置，避免账号"卡死"在过期窗口。
 	for idx := range candidates {
 		reset := resetCol[idx]
 		if reset == 0 || nowS < reset {
@@ -245,6 +250,10 @@ func randomSelectFrom(table *AccountRuntimeTable, candidates map[int]bool, quota
 			continue
 		}
 		if table.InflightByIdx[idx] >= maxInflight {
+			continue
+		}
+		// 累计失败 >= randomMaxFails 的账号暂时排除，避免重复打到刚失败的账号
+		if table.FailCountByIdx[idx] >= randomMaxFails {
 			continue
 		}
 		working[idx] = true
