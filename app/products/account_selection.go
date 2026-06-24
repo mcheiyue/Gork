@@ -77,10 +77,7 @@ func defaultAccountRefreshService() AccountRefreshService {
 }
 
 func SelectionMaxRetries() int {
-	if accountSelectionStrategy() == "random" {
-		return randomMaxRetries
-	}
-	return accountSelectionGetInt("retry.max_retries", 1)
+	return accountSelectionGetInt("retry.max_retries", randomMaxRetries)
 }
 
 func ModeCandidates(spec model.ModelSpec) []model.ModeID {

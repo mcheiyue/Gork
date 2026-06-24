@@ -56,13 +56,8 @@ func (s *fakeRuntimeRefreshService) RefreshOnDemand(context.Context) (controlacc
 	return controlaccount.RefreshResult{Refreshed: 1}, nil
 }
 
-func TestSelectionMaxRetriesFollowsStrategy(t *testing.T) {
+func TestSelectionMaxRetriesFollowsConfig(t *testing.T) {
 	resetAccountSelectionForTest(t)
-	accountSelectionStrategy = func() string { return "random" }
-	if got := SelectionMaxRetries(); got != 5 {
-		t.Fatalf("random retries = %d", got)
-	}
-	accountSelectionStrategy = func() string { return "quota" }
 	accountSelectionGetInt = func(key string, defaultValue int) int {
 		if key != "retry.max_retries" {
 			t.Fatalf("unexpected config key %q", key)
@@ -70,7 +65,11 @@ func TestSelectionMaxRetriesFollowsStrategy(t *testing.T) {
 		return 3
 	}
 	if got := SelectionMaxRetries(); got != 3 {
-		t.Fatalf("quota retries = %d", got)
+		t.Fatalf("retries from config = %d", got)
+	}
+	accountSelectionGetInt = defaultAccountSelectionGetInt
+	if got := SelectionMaxRetries(); got != 5 {
+		t.Fatalf("retries default = %d", got)
 	}
 }
 
@@ -114,8 +113,8 @@ func TestAccountSelectionProductionDefaultsUseRuntimeSources(t *testing.T) {
 	if err := dataaccount.SetStrategy("random"); err != nil {
 		t.Fatalf("set random strategy: %v", err)
 	}
-	if got := SelectionMaxRetries(); got != 5 {
-		t.Fatalf("random retries from selector = %d", got)
+	if got := SelectionMaxRetries(); got != 7 {
+		t.Fatalf("retries from selector = %d", got)
 	}
 	if err := dataaccount.SetStrategy("quota"); err != nil {
 		t.Fatalf("set quota strategy: %v", err)
