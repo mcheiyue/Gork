@@ -53,7 +53,7 @@ func resolveImage(ctx context.Context, token string, rawURL string, imageID stri
 
 	fileID := saveImage(raw, mime, imageID)
 	appURL := strings.TrimRight(appURLConfig, "/")
-	localURL := "/v1/files/image?id=" + fileID
+	localURL := signedRouterFileURL("/v1/files/image", fileID)
 	if appURL != "" {
 		localURL = appURL + localURL
 	}

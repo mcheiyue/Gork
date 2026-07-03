@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dslzl/gork/app/control/model"
 	"github.com/dslzl/gork/app/dataplane/reverse/transport"
@@ -98,7 +99,7 @@ func TestImagesResolveOutputSavesLocalURLOrReturnsBase64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve local err=%v", err)
 	}
-	if local.APIValue != "https://api.local/v1/files/image?id=abc123-saved" {
+	if want := "https://api.local" + signedRouterFileURL("/v1/files/image", "abc123-saved"); local.APIValue != want {
 		t.Fatalf("local=%#v saved=%#v", local, saved)
 	}
 	if !reflect.DeepEqual(saved, map[string]string{"raw": "image-bytes", "mime": "image/png", "fileID": "abc123"}) {
@@ -214,7 +215,11 @@ func TestImagesGenerateNonStreamUsesImagineEvents(t *testing.T) {
 		t.Fatalf("created=%#v", result.Response["created"])
 	}
 	data := result.Response["data"].([]map[string]any)
-	if len(data) != 2 || !strings.Contains(data[0]["url"].(string), "one-image/png-raw:tok-img") || !strings.Contains(data[1]["url"].(string), "two-image/png-raw:tok-img") {
+	if len(data) != 2 ||
+		!strings.Contains(data[0]["url"].(string), "id=one-image%2Fpng-raw%3Atok-img") ||
+		!strings.Contains(data[0]["url"].(string), "sig=") ||
+		!strings.Contains(data[1]["url"].(string), "id=two-image%2Fpng-raw%3Atok-img") ||
+		!strings.Contains(data[1]["url"].(string), "sig=") {
 		t.Fatalf("data=%#v", data)
 	}
 	if dir.releases != 1 || len(dir.feedbacks) != 0 {
@@ -762,9 +767,13 @@ func resetImagesDepsForTest(t *testing.T) {
 	oldStreamLite := imageStreamLiteGenerate
 	oldNowUnix := imageNowUnix
 	oldResponseID := imageResponseID
+	oldMediaNow := routerMediaNow
+	oldMediaSecret := routerMediaSigningSecret
 
 	imageAppURL = func() string { return "" }
 	imagePublicProxyEnabled = func() bool { return false }
+	routerMediaNow = func() time.Time { return time.Unix(1700000000, 0) }
+	routerMediaSigningSecret = func() string { return "test-media-secret" }
 	imageDownloadBytes = func(context.Context, string, string) ([]byte, string, error) {
 		return []byte("image"), "image/jpeg", nil
 	}
@@ -813,5 +822,7 @@ func resetImagesDepsForTest(t *testing.T) {
 		imageStreamLiteGenerate = oldStreamLite
 		imageNowUnix = oldNowUnix
 		imageResponseID = oldResponseID
+		routerMediaNow = oldMediaNow
+		routerMediaSigningSecret = oldMediaSecret
 	})
 }

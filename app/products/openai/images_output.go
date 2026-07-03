@@ -35,7 +35,7 @@ func normalizeImageResponseFormat(responseFormat string) (string, error) {
 }
 
 func localImageURL(fileID string) string {
-	return imageAppURL() + "/v1/files/image?id=" + fileID
+	return imageAppURL() + signedRouterFileURL("/v1/files/image", fileID)
 }
 
 func extractImageFileID(rawURL string) string {

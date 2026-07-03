@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	platformconfig "github.com/dslzl/gork/app/platform/config"
+	configbackends "github.com/dslzl/gork/app/platform/config/backends"
 )
 
 func TestNewAppRoutesHealthStaticFaviconAndProductRouters(t *testing.T) {
@@ -79,6 +82,17 @@ func TestDefaultLifecycleWiresAdminAccountRuntime(t *testing.T) {
 	t.Setenv("DATA_DIR", t.TempDir())
 	t.Setenv("HOST", "127.0.0.1")
 	t.Setenv("PORT", "0")
+	data := map[string]any{"app": map[string]any{"app_key": "gork"}}
+	oldCreateConfigBackend := appMainCreateConfigBackend
+	oldGlobalConfig := platformconfig.GlobalConfig
+	t.Cleanup(func() {
+		appMainCreateConfigBackend = oldCreateConfigBackend
+		platformconfig.GlobalConfig = oldGlobalConfig
+	})
+	appMainCreateConfigBackend = func(configbackends.FactoryOptions) (configbackends.ConfigBackend, error) {
+		return lifecycleConfigBackend{data: &data}, nil
+	}
+	platformconfig.GlobalConfig = platformconfig.NewConfigSnapshot(lifecycleConfigBackend{data: &data}, platformconfig.ConfigSnapshotOptions{})
 
 	app := NewApp(AppOptions{})
 	if err := app.Start(context.Background()); err != nil {

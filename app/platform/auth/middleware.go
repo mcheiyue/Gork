@@ -37,7 +37,7 @@ func GetAPIKeys(settings AuthSettings) []string {
 
 func GetAdminKey(settings AuthSettings) string {
 	if settings.AdminKey == nil {
-		return "gork"
+		return ""
 	}
 	return fmt.Sprint(settings.AdminKey)
 }

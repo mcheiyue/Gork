@@ -325,10 +325,15 @@ func waitForDirectoryRevision(t *testing.T, directory interface{ Revision() int 
 	}
 }
 
-type lifecycleConfigBackend struct{}
+type lifecycleConfigBackend struct {
+	data *map[string]any
+}
 
-func (lifecycleConfigBackend) Load(context.Context) (map[string]any, error) {
-	return map[string]any{}, nil
+func (b lifecycleConfigBackend) Load(context.Context) (map[string]any, error) {
+	if b.data == nil {
+		return map[string]any{}, nil
+	}
+	return *b.data, nil
 }
 func (lifecycleConfigBackend) ApplyPatch(context.Context, map[string]any) error {
 	return nil

@@ -160,6 +160,24 @@ func TestRouterServesLocalImageAndVideoFiles(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); got != "image/png" {
 		t.Fatalf("image content-type=%q", got)
 	}
+	if rec.Header().Get("Deprecation") != "true" || rec.Header().Get("Warning") == "" {
+		t.Fatalf("unsigned image missing deprecation headers: %#v", rec.Header())
+	}
+
+	rec = httptest.NewRecorder()
+	NewRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, signedRouterFileURL("/v1/files/image", imageID), nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "png-body" {
+		t.Fatalf("signed image status/body=%d/%q", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Deprecation") != "" {
+		t.Fatalf("signed image should not warn: %#v", rec.Header())
+	}
+
+	rec = httptest.NewRecorder()
+	NewRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/files/image?id="+imageID+"&exp=1700003600&sig=bad", nil))
+	if rec.Code == http.StatusOK {
+		t.Fatalf("bad signed image unexpectedly succeeded")
+	}
 
 	videoID := "fedcba0987654321"
 	videoDir, err := storage.VideoFilesDir()
@@ -180,6 +198,20 @@ func TestRouterServesLocalImageAndVideoFiles(t *testing.T) {
 	}
 	if got := rec.Header().Get("Content-Type"); got != "video/mp4" {
 		t.Fatalf("video content-type=%q", got)
+	}
+	if rec.Header().Get("Deprecation") != "true" || rec.Header().Get("Warning") == "" {
+		t.Fatalf("unsigned video missing deprecation headers: %#v", rec.Header())
+	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, signedRouterFileURL("/v1/files/video", videoID), nil)
+	req.Header.Set("Range", "bytes=0-2")
+	NewRouter().ServeHTTP(rec, req)
+	if rec.Code != http.StatusPartialContent || rec.Body.String() != "mp4" {
+		t.Fatalf("video range status/body=%d/%q", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Accept-Ranges") != "bytes" {
+		t.Fatalf("video range headers=%#v", rec.Header())
 	}
 }
 
@@ -700,9 +732,13 @@ func resetRouterDepsForTest(t *testing.T) {
 	oldGenerate := routerGenerateImages
 	oldEdit := routerEditImages
 	oldAuthSettings := routerAuthSettings
+	oldMediaNow := routerMediaNow
+	oldMediaSecret := routerMediaSigningSecret
 
 	routerAvailablePools = func(*http.Request) map[string]struct{} { return map[string]struct{}{} }
 	routerAuthSettings = func() auth.AuthSettings { return auth.AuthSettings{} }
+	routerMediaNow = func() time.Time { return time.Unix(1700000000, 0) }
+	routerMediaSigningSecret = func() string { return "test-media-secret" }
 	routerCompletions = func(context.Context, chatCompletionOptions) (chatCompletionResult, error) {
 		return chatCompletionResult{}, errors.New("router chat completions are not configured")
 	}
@@ -724,6 +760,8 @@ func resetRouterDepsForTest(t *testing.T) {
 		routerGenerateImages = oldGenerate
 		routerEditImages = oldEdit
 		routerAuthSettings = oldAuthSettings
+		routerMediaNow = oldMediaNow
+		routerMediaSigningSecret = oldMediaSecret
 	})
 }
 

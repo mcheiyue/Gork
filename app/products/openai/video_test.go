@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dslzl/gork/app/control/model"
 	"github.com/dslzl/gork/app/dataplane/reverse/transport"
@@ -198,9 +199,13 @@ func resetVideoDepsForTest(t *testing.T) {
 	oldAppURL := videoAppURL
 	oldNow := videoNowUnix
 	oldID := videoID
+	oldMediaNow := routerMediaNow
+	oldMediaSecret := routerMediaSigningSecret
 	clearVideoJobs()
 	videoNowUnix = func() int64 { return 1234 }
 	videoID = func() string { return "video_testid" }
+	routerMediaNow = func() time.Time { return time.Unix(1700000000, 0) }
+	routerMediaSigningSecret = func() string { return "test-media-secret" }
 	videoScheduleExpiration = func(string) {}
 	t.Cleanup(func() {
 		videoStartJob = oldStartJob
@@ -216,6 +221,8 @@ func resetVideoDepsForTest(t *testing.T) {
 		videoAppURL = oldAppURL
 		videoNowUnix = oldNow
 		videoID = oldID
+		routerMediaNow = oldMediaNow
+		routerMediaSigningSecret = oldMediaSecret
 		clearVideoJobs()
 	})
 }

@@ -176,14 +176,14 @@ func TestChatResolveImageFastPathAndFallbacks(t *testing.T) {
 		return "file_123"
 	}
 	got, err = resolveImage(context.Background(), "tok", "https://cdn.x.ai/b.png", "img2")
-	if err != nil || got != "https://api.example.test/v1/files/image?id=file_123" {
+	if want := "https://api.example.test" + signedRouterFileURL("/v1/files/image", "file_123"); err != nil || got != want {
 		t.Fatalf("local_url got=%q err=%v", got, err)
 	}
 
 	imageFormatConfig = "local_md"
 	appURLConfig = ""
 	got, err = resolveImage(context.Background(), "tok", "https://cdn.x.ai/c.png", "img2")
-	if err != nil || got != "![image](/v1/files/image?id=file_123)" {
+	if want := "![image](" + signedRouterFileURL("/v1/files/image", "file_123") + ")"; err != nil || got != want {
 		t.Fatalf("local_md got=%q err=%v", got, err)
 	}
 
@@ -207,7 +207,7 @@ func TestChatResolveImageProxiesImaginePublicEvenForGrokURL(t *testing.T) {
 	saveImage = func([]byte, string, string) string { return "file_imagine" }
 
 	got, err := resolveImage(context.Background(), "tok", "https://imagine-public.x.ai/a.jpg", "img")
-	if err != nil || got != "/v1/files/image?id=file_imagine" {
+	if want := signedRouterFileURL("/v1/files/image", "file_imagine"); err != nil || got != want {
 		t.Fatalf("imagine proxy got=%q err=%v", got, err)
 	}
 }
@@ -936,10 +936,14 @@ func resetChatDepsForTest(t *testing.T) {
 	oldConsole := consoleCompletions
 	oldConsoleStream := consoleStreamChat
 	oldRetryDelay := chatRetryDelay
+	oldMediaNow := routerMediaNow
+	oldMediaSecret := routerMediaSigningSecret
 
 	imageFormatConfig = "grok_url"
 	proxyImaginePublicConfig = false
 	appURLConfig = ""
+	routerMediaNow = func() time.Time { return time.Unix(1700000000, 0) }
+	routerMediaSigningSecret = func() string { return "test-media-secret" }
 	downloadImageBytes = func(context.Context, string, string) ([]byte, string, error) {
 		return []byte("hi"), "image/png", nil
 	}
@@ -989,5 +993,7 @@ func resetChatDepsForTest(t *testing.T) {
 		consoleCompletions = oldConsole
 		consoleStreamChat = oldConsoleStream
 		chatRetryDelay = oldRetryDelay
+		routerMediaNow = oldMediaNow
+		routerMediaSigningSecret = oldMediaSecret
 	})
 }

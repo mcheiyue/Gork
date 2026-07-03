@@ -537,9 +537,9 @@ func renderVideoHTML(rawURL string) string {
 func localVideoURL(fileID string) string {
 	appURL := videoAppURL()
 	if appURL == "" {
-		return "/v1/files/video?id=" + fileID
+		return signedRouterFileURL("/v1/files/video", fileID)
 	}
-	return appURL + "/v1/files/video?id=" + fileID
+	return appURL + signedRouterFileURL("/v1/files/video", fileID)
 }
 
 func normalizeVideoFormat(value string) (string, error) {

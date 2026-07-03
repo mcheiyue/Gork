@@ -10,6 +10,7 @@ import (
 
 	"github.com/dslzl/gork/app/platform"
 	"github.com/dslzl/gork/app/platform/auth"
+	platformconfig "github.com/dslzl/gork/app/platform/config"
 )
 
 func TestWebRouterRedirectsAndMeta(t *testing.T) {
@@ -198,6 +199,16 @@ func TestWebRouterMountsWebUIAPI(t *testing.T) {
 
 func TestWebRouterMountsAdminAPI(t *testing.T) {
 	resetWebRouterDepsForTest(t)
+	oldGlobalConfig := platformconfig.GlobalConfig
+	t.Cleanup(func() {
+		platformconfig.GlobalConfig = oldGlobalConfig
+	})
+	platformconfig.GlobalConfig = platformconfig.NewConfigSnapshot(webRouterConfigBackend{
+		"app": map[string]any{"app_key": "gork"},
+	}, platformconfig.ConfigSnapshotOptions{})
+	if err := platformconfig.GlobalConfig.Load(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
 	rec := getWeb("/admin/api/verify", "Bearer gork")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"success"`) {
 		t.Fatalf("admin api status=%d body=%s", rec.Code, rec.Body.String())
@@ -249,4 +260,26 @@ func resetWebRouterDepsForTest(t *testing.T) {
 		webRouterProjectVersion = oldVersion
 		webRouterLatestRelease = oldLatest
 	})
+}
+
+type webRouterConfigBackend map[string]any
+
+func (b webRouterConfigBackend) Load(context.Context) (map[string]any, error) {
+	return map[string]any(b), nil
+}
+
+func (webRouterConfigBackend) ApplyPatch(context.Context, map[string]any) error {
+	return nil
+}
+
+func (webRouterConfigBackend) Clear(context.Context) error {
+	return nil
+}
+
+func (webRouterConfigBackend) Version(context.Context) (any, error) {
+	return 0, nil
+}
+
+func (webRouterConfigBackend) Close(context.Context) error {
+	return nil
 }

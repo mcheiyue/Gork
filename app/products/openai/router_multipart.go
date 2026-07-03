@@ -121,7 +121,7 @@ func handleVideosRead(w http.ResponseWriter, r *http.Request) {
 			writeRouterError(w, err)
 			return
 		}
-		if !serveRouterFile(w, path, "video/mp4") {
+		if !serveRouterFile(w, r, path, "video/mp4") {
 			writeRouterError(w, platform.NewValidationError("Video content for '"+videoID+"' not found", "video_id", ""))
 		}
 		return

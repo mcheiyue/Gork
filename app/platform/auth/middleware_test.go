@@ -15,7 +15,7 @@ func TestAuthSettingsHelpersMatchPython(t *testing.T) {
 	if got := GetAPIKeys(AuthSettings{APIKey: []any{" a ", "", 2}}); !reflect.DeepEqual(got, []string{"a", "2"}) {
 		t.Fatalf("list API keys = %#v", got)
 	}
-	if GetAdminKey(AuthSettings{}) != "gork" || GetAdminKey(AuthSettings{AdminKey: ""}) != "" {
+	if GetAdminKey(AuthSettings{}) != "" || GetAdminKey(AuthSettings{AdminKey: ""}) != "" {
 		t.Fatalf("admin key defaults mismatch")
 	}
 	if GetWebUIKey(AuthSettings{WebUIKey: 123}) != "123" {
@@ -65,6 +65,10 @@ func TestVerifyAdminKeyMatchesHeaderAndQueryBehavior(t *testing.T) {
 	assertAuthError(t, VerifyAdminKey("", "", AuthSettings{AdminKey: ""}), 401, "Admin key is not configured.")
 	assertAuthError(t, VerifyAdminKey("", "", settings), 401, "Missing authentication token.")
 	assertAuthError(t, VerifyAdminKey("Bearer wrong", "", settings), 401, "Invalid authentication token.")
+}
+
+func TestVerifyAdminKeyDoesNotDefaultToWellKnownDevelopmentKey(t *testing.T) {
+	assertAuthError(t, VerifyAdminKey("Bearer gork", "", AuthSettings{}), 401, "Admin key is not configured.")
 }
 
 func TestVerifyWebUIKeyMatchesEnabledAndBearerBehavior(t *testing.T) {
