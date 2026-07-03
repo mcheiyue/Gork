@@ -3,6 +3,7 @@ package admin
 import (
 	"net/http"
 
+	accountcontrol "github.com/dslzl/gork/app/control/account"
 	"github.com/dslzl/gork/app/platform"
 )
 
@@ -55,19 +56,44 @@ func adminTokensEnsureTargetFree(r *http.Request, repo adminTokensRepository, to
 	return nil
 }
 
-func adminTokensCopyStateAndDeleteOld(r *http.Request, repo adminTokensRepository, oldToken string, newToken string, record adminAssetsAccount) error {
-	patch := adminBatchAccountPatch{
-		Token: newToken, Status: record.Status, Tags: record.Tags,
-		UsageUseDelta: record.UsageUseCount, UsageFailDelta: record.UsageFailCount,
-		LastUseAt: record.LastUseAt, LastFailAt: record.LastFailAt, LastFailReason: record.LastFailReason,
-		LastSyncAt: record.LastSyncAt, LastClearAt: record.LastClearAt, StateReason: record.StateReason,
-		ExtMerge: record.Ext,
-	}
+func adminTokensCopyStateAndDeleteOld(r *http.Request, repo adminTokensRepository, oldToken string, newToken string, pool string, record adminAssetsAccount) error {
+	patch := adminTokensEditPatch(newToken, pool, record)
+	patch.Tags = append([]string(nil), record.Tags...)
+	patch.ExtMerge = cloneRuntimeMap(record.Ext)
 	if _, err := repo.PatchAccounts(r.Context(), []adminBatchAccountPatch{patch}); err != nil {
 		return err
 	}
 	_, err := repo.DeleteAccounts(r.Context(), []string{oldToken})
 	return err
+}
+
+func adminTokensEditPatch(token string, pool string, record adminAssetsAccount) adminBatchAccountPatch {
+	patch := adminBatchAccountPatch{
+		Token: token, Pool: pool, Status: record.Status,
+		UsageUseDelta: record.UsageUseCount, UsageFailDelta: record.UsageFailCount,
+		LastUseAt: record.LastUseAt, LastFailAt: record.LastFailAt, LastFailReason: record.LastFailReason,
+		LastSyncAt: record.LastSyncAt, LastClearAt: record.LastClearAt, StateReason: record.StateReason,
+	}
+	quotaSet, err := accountcontrol.AccountQuotaSetFromDict(record.Quota)
+	if err != nil {
+		quotaSet = accountcontrol.DefaultQuotaSet(pool)
+	}
+	quota := accountcontrol.NormalizeQuotaSet(pool, quotaSet).ToDict()
+	patch.QuotaAuto = adminQuotaWindowPatch(quota, "auto")
+	patch.QuotaFast = adminQuotaWindowPatch(quota, "fast")
+	patch.QuotaExpert = adminQuotaWindowPatch(quota, "expert")
+	patch.QuotaHeavy = adminQuotaWindowPatch(quota, "heavy")
+	patch.QuotaGrok43 = adminQuotaWindowPatch(quota, "grok_4_3")
+	patch.QuotaConsole = adminQuotaWindowPatch(quota, "console")
+	return patch
+}
+
+func adminQuotaWindowPatch(quota map[string]any, key string) map[string]any {
+	window, ok := quota[key].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return cloneRuntimeMap(window)
 }
 
 func adminTokensTogglePatch(record adminAssetsAccount, disabled bool) adminBatchAccountPatch {

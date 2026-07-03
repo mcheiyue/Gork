@@ -20,6 +20,11 @@ func sqlScanChangesQuery(dialect SQLDialect) string {
 		sqlBind(dialect, 1) + " ORDER BY revision LIMIT " + sqlBind(dialect, 2)
 }
 
+func sqlScanRevisionChangesQuery(dialect SQLDialect) string {
+	return "SELECT " + localAccountColumns + " FROM accounts WHERE revision = " +
+		sqlBind(dialect, 1) + " ORDER BY token"
+}
+
 func safeSQLSort(sortBy string) string {
 	switch sortBy {
 	case "token", "pool", "status", "created_at", "updated_at", "tags",

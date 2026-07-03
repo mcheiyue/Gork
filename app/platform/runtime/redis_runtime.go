@@ -15,6 +15,8 @@ type RedisRuntimeClient interface {
 	SetNX(ctx context.Context, key, value string, ttlMS int) (bool, error)
 	Expire(ctx context.Context, key string, ttlSeconds int) error
 	Delete(ctx context.Context, key string) error
+	CompareExpire(ctx context.Context, key string, owner string, ttlMS int) (bool, error)
+	CompareDelete(ctx context.Context, key string, owner string) (bool, error)
 }
 
 type RedisRuntimeClientFactory func(rawURL string) (RedisRuntimeClient, error)
@@ -68,38 +70,19 @@ func (l *RedisRuntimeLease) Renew(ctx context.Context) (bool, error) {
 	if l.released {
 		return false, nil
 	}
-	current, err := l.client.Get(ctx, l.Key)
-	if err != nil {
-		return false, err
-	}
-	owner, ok := decodeRedisRuntimeValue(current)
-	if !ok || owner != l.Owner {
-		return false, nil
-	}
-	if err := l.client.Expire(ctx, l.Key, maxRuntimeInt(1, l.TTLMS/1000)); err != nil {
-		return false, err
-	}
-	return true, nil
+	return l.client.CompareExpire(ctx, l.Key, l.Owner, l.TTLMS)
 }
 
 func (l *RedisRuntimeLease) Release(ctx context.Context) (bool, error) {
 	if l.released {
 		return false, nil
 	}
-	current, err := l.client.Get(ctx, l.Key)
+	released, err := l.client.CompareDelete(ctx, l.Key, l.Owner)
 	if err != nil {
 		return false, err
 	}
-	owner, ok := decodeRedisRuntimeValue(current)
-	if !ok || owner != l.Owner {
-		l.released = true
-		return false, nil
-	}
-	if err := l.client.Delete(ctx, l.Key); err != nil {
-		return false, err
-	}
 	l.released = true
-	return true, nil
+	return released, nil
 }
 
 func NewRedisRuntimeStore(client RedisRuntimeClient, options RedisRuntimeStoreOptions) *RedisRuntimeStore {
@@ -197,6 +180,26 @@ func (c *goRedisRuntimeClient) Expire(ctx context.Context, key string, ttlSecond
 
 func (c *goRedisRuntimeClient) Delete(ctx context.Context, key string) error {
 	return c.client.Del(ctx, key).Err()
+}
+
+func (c *goRedisRuntimeClient) CompareExpire(ctx context.Context, key string, owner string, ttlMS int) (bool, error) {
+	result, err := c.client.Eval(ctx, `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+end
+return 0
+`, []string{key}, owner, maxRuntimeInt(1, ttlMS)).Int()
+	return result == 1, err
+}
+
+func (c *goRedisRuntimeClient) CompareDelete(ctx context.Context, key string, owner string) (bool, error) {
+	result, err := c.client.Eval(ctx, `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0
+`, []string{key}, owner).Int()
+	return result == 1, err
 }
 
 func (c *goRedisRuntimeClient) HSet(ctx context.Context, key string, mapping map[string]string) error {

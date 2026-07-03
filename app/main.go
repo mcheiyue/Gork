@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	accountcontrol "github.com/dslzl/gork/app/control/account"
+	accountdataplane "github.com/dslzl/gork/app/dataplane/account"
 	"github.com/dslzl/gork/app/platform/config"
 	"github.com/dslzl/gork/app/platform/logging"
 	"github.com/dslzl/gork/app/products/anthropic"
@@ -24,7 +25,9 @@ var (
 		return config.GlobalConfig.Load(ctx, "")
 	}
 	appMainReconcileRefreshRuntime = func() string {
-		return accountcontrol.ReconcileRefreshRuntime()
+		strategy := accountcontrol.ReconcileRefreshRuntime()
+		_ = accountdataplane.SetStrategy(strategy)
+		return strategy
 	}
 	appMainSetupLogging = func() error {
 		return logging.SetupLogging(logging.LoggingOptions{})

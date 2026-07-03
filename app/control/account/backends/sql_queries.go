@@ -2,6 +2,7 @@ package backends
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 
 	account "github.com/dslzl/gork/app/control/account"
@@ -73,12 +74,33 @@ func scanSQLChanges(
 	if err != nil {
 		return account.AccountChangeSet{}, err
 	}
-	rows, err := db.QueryContext(ctx, sqlScanChangesQuery(dialect), sinceRevision, limit)
+	nextRevision, ok, err := nextSQLChangeRevision(ctx, db, dialect, sinceRevision)
+	if err != nil {
+		return account.AccountChangeSet{}, err
+	}
+	if !ok {
+		changes := account.NewAccountChangeSet()
+		changes.Revision = revision
+		return changes, nil
+	}
+	rows, err := db.QueryContext(ctx, sqlScanRevisionChangesQuery(dialect), nextRevision)
 	if err != nil {
 		return account.AccountChangeSet{}, err
 	}
 	defer rows.Close()
-	return scanLocalChangeRows(rows, revision, limit)
+	return scanLocalChangeRows(rows, nextRevision, nextRevision < revision)
+}
+
+func nextSQLChangeRevision(ctx context.Context, db localSQLRunner, dialect SQLDialect, sinceRevision int) (int, bool, error) {
+	var next sql.NullInt64
+	query := "SELECT MIN(revision) FROM accounts WHERE revision > " + sqlBind(dialect, 1)
+	if err := db.QueryRowContext(ctx, query, sinceRevision).Scan(&next); err != nil {
+		return 0, false, err
+	}
+	if !next.Valid {
+		return 0, false, nil
+	}
+	return int(next.Int64), true, nil
 }
 
 func listSQLAccounts(

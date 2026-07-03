@@ -75,20 +75,26 @@ func adminTokensEdit(r *http.Request, repo adminTokensRepository, req adminToken
 		}
 	}
 	record := records[0]
-	if _, err := repo.UpsertAccounts(r.Context(), []adminTokensUpsert{{Token: newToken, Pool: adminTokenPool(req.Pool), Tags: record.Tags, Ext: record.Ext}}); err != nil {
-		return nil, err
-	}
-	if oldToken != newToken {
-		if err := adminTokensCopyStateAndDeleteOld(r, repo, oldToken, newToken, record); err != nil {
+	pool := adminTokenPool(req.Pool)
+	if oldToken == newToken {
+		patch := adminTokensEditPatch(newToken, pool, record)
+		if _, err := repo.PatchAccounts(r.Context(), []adminBatchAccountPatch{patch}); err != nil {
+			return nil, err
+		}
+	} else {
+		if _, err := repo.UpsertAccounts(r.Context(), []adminTokensUpsert{{Token: newToken, Pool: pool, Tags: record.Tags, Ext: record.Ext}}); err != nil {
+			return nil, err
+		}
+		if err := adminTokensCopyStateAndDeleteOld(r, repo, oldToken, newToken, pool, record); err != nil {
 			return nil, err
 		}
 	}
 	if oldToken == newToken {
-		logging.Logger.Info("admin token updated", "token", adminTokenMask(newToken), "pool", adminTokenPool(req.Pool))
+		logging.Logger.Info("admin token updated", "token", adminTokenMask(newToken), "pool", pool)
 	} else {
-		logging.Logger.Info("admin token replaced", "previous_token", adminTokenMask(oldToken), "current_token", adminTokenMask(newToken), "pool", adminTokenPool(req.Pool))
+		logging.Logger.Info("admin token replaced", "previous_token", adminTokenMask(oldToken), "current_token", adminTokenMask(newToken), "pool", pool)
 	}
-	return map[string]any{"status": "success", "token": newToken, "pool": adminTokenPool(req.Pool)}, nil
+	return map[string]any{"status": "success", "token": newToken, "pool": pool}, nil
 }
 
 func adminTokensToggle(r *http.Request, repo adminTokensRepository, req adminTokensToggleRequest) (map[string]any, error) {

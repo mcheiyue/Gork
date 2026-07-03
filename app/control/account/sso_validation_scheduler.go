@@ -39,6 +39,7 @@ type SSOValidationScheduler struct {
 	mu      sync.Mutex
 	cancel  context.CancelFunc
 	running bool
+	wg      sync.WaitGroup
 }
 
 var ssoValidationSchedulerSingleton *SSOValidationScheduler
@@ -74,7 +75,11 @@ func (s *SSOValidationScheduler) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.running = true
-	go s.loop(ctx)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.loop(ctx)
+	}()
 }
 
 func (s *SSOValidationScheduler) Stop() {
@@ -86,6 +91,7 @@ func (s *SSOValidationScheduler) Stop() {
 	if cancel != nil {
 		cancel()
 	}
+	s.wg.Wait()
 }
 
 func (s *SSOValidationScheduler) loop(ctx context.Context) {

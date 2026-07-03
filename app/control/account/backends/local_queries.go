@@ -93,28 +93,46 @@ func scanLocalChanges(
 	if err != nil {
 		return account.AccountChangeSet{}, err
 	}
+	nextRevision, ok, err := nextLocalChangeRevision(ctx, db, sinceRevision)
+	if err != nil {
+		return account.AccountChangeSet{}, err
+	}
+	if !ok {
+		changes := account.NewAccountChangeSet()
+		changes.Revision = revision
+		return changes, nil
+	}
 	rows, err := db.QueryContext(
 		ctx,
 		"SELECT "+localAccountColumns+" FROM "+localAccountTable+
-			" WHERE revision > ? ORDER BY revision LIMIT ?",
-		sinceRevision,
-		limit,
+			" WHERE revision = ? ORDER BY token",
+		nextRevision,
 	)
 	if err != nil {
 		return account.AccountChangeSet{}, err
 	}
 	defer rows.Close()
-	return scanLocalChangeRows(rows, revision, limit)
+	return scanLocalChangeRows(rows, nextRevision, nextRevision < revision)
+}
+
+func nextLocalChangeRevision(ctx context.Context, db localSQLRunner, sinceRevision int) (int, bool, error) {
+	var next sql.NullInt64
+	if err := db.QueryRowContext(ctx, "SELECT MIN(revision) FROM "+localAccountTable+" WHERE revision > ?", sinceRevision).Scan(&next); err != nil {
+		return 0, false, err
+	}
+	if !next.Valid {
+		return 0, false, nil
+	}
+	return int(next.Int64), true, nil
 }
 
 func scanLocalChangeRows(
 	rows *sql.Rows,
 	revision int,
-	limit int,
+	hasMore bool,
 ) (account.AccountChangeSet, error) {
 	changes := account.NewAccountChangeSet()
 	changes.Revision = revision
-	count := 0
 	for rows.Next() {
 		record, err := scanLocalAccount(rows)
 		if err != nil {
@@ -125,12 +143,11 @@ func scanLocalChangeRows(
 		} else {
 			changes.Items = append(changes.Items, record)
 		}
-		count++
 	}
 	if err := rows.Err(); err != nil {
 		return account.AccountChangeSet{}, err
 	}
-	changes.HasMore = count == limit
+	changes.HasMore = hasMore
 	return changes, nil
 }
 

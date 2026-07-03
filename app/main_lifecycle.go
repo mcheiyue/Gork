@@ -286,7 +286,7 @@ func defaultAppMainStartRefreshRuntime(ctx context.Context, state *appMainLifecy
 	accountcontrol.SetRefreshScheduler(scheduler)
 	accountcontrol.SetSSOValidationScheduler(validationScheduler)
 	accountcontrol.SetRefreshSchedulerLeader(leader)
-	accountcontrol.ReconcileRefreshRuntime()
+	appMainReconcileRefreshRuntime()
 	return func(ctx context.Context) error {
 		if consoleResetCleanup != nil {
 			consoleResetCleanup(ctx)

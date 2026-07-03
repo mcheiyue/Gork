@@ -71,18 +71,33 @@ func (r *RedisAccountRepository) ReplacePool(
 	if err != nil {
 		return account.AccountMutationResult{}, err
 	}
-	deleted, err := r.DeleteAccounts(ctx, existing)
+	backups, err := r.backupRedisRecords(ctx, existing)
 	if err != nil {
 		return account.AccountMutationResult{}, err
 	}
-	upserted, err := r.UpsertAccounts(ctx, command.Upserts)
+	deletedRev, err := r.bumpRevision(ctx)
 	if err != nil {
+		return account.AccountMutationResult{}, err
+	}
+	deleted, err := r.deleteRedisAccounts(ctx, existing, deletedRev)
+	if err != nil {
+		_ = r.restoreRedisBackups(ctx, backups)
+		return account.AccountMutationResult{}, err
+	}
+	upsertRev, err := r.bumpRevision(ctx)
+	if err != nil {
+		_ = r.restoreRedisBackups(ctx, backups)
+		return account.AccountMutationResult{}, err
+	}
+	upserted, err := r.upsertRedisAccounts(ctx, command.Upserts, upsertRev)
+	if err != nil {
+		_ = r.restoreRedisBackups(ctx, backups)
 		return account.AccountMutationResult{}, err
 	}
 	return account.AccountMutationResult{
-		Upserted: upserted.Upserted,
-		Deleted:  deleted.Deleted,
-		Revision: upserted.Revision,
+		Upserted: upserted,
+		Deleted:  deleted,
+		Revision: upsertRev,
 	}, nil
 }
 
@@ -92,13 +107,23 @@ func (r *RedisAccountRepository) upsertRedisAccounts(
 	revision int,
 ) (int, error) {
 	count := 0
+	backups := map[string]redisRecordBackup{}
 	for _, item := range items {
 		token, pool, ok := normalizeLocalUpsert(item)
 		if !ok {
 			continue
 		}
+		if _, ok := backups[token]; !ok {
+			backup, err := r.backupRedisRecord(ctx, token)
+			if err != nil {
+				_ = r.restoreRedisBackups(ctx, backups)
+				return 0, err
+			}
+			backups[token] = backup
+		}
 		affected, err := r.upsertRedisAccount(ctx, item, token, pool, revision)
 		if err != nil {
+			_ = r.restoreRedisBackups(ctx, backups)
 			return 0, err
 		}
 		count += affected
@@ -128,14 +153,18 @@ func (r *RedisAccountRepository) upsertRedisAccount(
 		return 0, err
 	}
 	key := redisRecordKey(token)
-	if old, err := r.store.HGetAll(ctx, key); err != nil {
+	oldHash, err := r.store.HGetAll(ctx, key)
+	if err != nil {
 		return 0, err
-	} else if len(old) > 0 {
-		oldRecord, err := redisRecordFromHash(token, old)
+	}
+	var oldRecord *account.AccountRecord
+	if len(oldHash) > 0 {
+		parsed, err := redisRecordFromHash(token, oldHash)
 		if err != nil {
 			return 0, err
 		}
-		if err := r.removeRecordIndexes(ctx, oldRecord); err != nil {
+		oldRecord = &parsed
+		if err := r.removeRecordIndexes(ctx, parsed); err != nil {
 			return 0, err
 		}
 	}
@@ -144,12 +173,118 @@ func (r *RedisAccountRepository) upsertRedisAccount(
 		return 0, err
 	}
 	if err := r.store.HSet(ctx, key, hash); err != nil {
+		_ = r.rollbackRedisUpsert(ctx, key, oldRecord, oldHash, record)
 		return 0, err
 	}
 	if err := r.addRecordIndexes(ctx, record); err != nil {
+		_ = r.rollbackRedisUpsert(ctx, key, oldRecord, oldHash, record)
 		return 0, err
 	}
-	return 1, r.store.ZAdd(ctx, redisKeyRevisionLog, map[string]int{token: revision})
+	if err := r.store.ZAdd(ctx, redisKeyRevisionLog, map[string]int{token: revision}); err != nil {
+		_ = r.rollbackRedisUpsert(ctx, key, oldRecord, oldHash, record)
+		return 0, err
+	}
+	return 1, nil
+}
+
+type redisRecordBackup struct {
+	token  string
+	key    string
+	hash   map[string]string
+	record *account.AccountRecord
+}
+
+func (r *RedisAccountRepository) backupRedisRecords(ctx context.Context, tokens []string) (map[string]redisRecordBackup, error) {
+	backups := map[string]redisRecordBackup{}
+	for _, token := range tokens {
+		if _, ok := backups[token]; ok {
+			continue
+		}
+		backup, err := r.backupRedisRecord(ctx, token)
+		if err != nil {
+			return nil, err
+		}
+		backups[token] = backup
+	}
+	return backups, nil
+}
+
+func (r *RedisAccountRepository) backupRedisRecord(ctx context.Context, token string) (redisRecordBackup, error) {
+	key := redisRecordKey(token)
+	hash, err := r.store.HGetAll(ctx, key)
+	if err != nil {
+		return redisRecordBackup{}, err
+	}
+	backup := redisRecordBackup{token: token, key: key, hash: cloneRedisHash(hash)}
+	if len(hash) == 0 {
+		return backup, nil
+	}
+	record, err := redisRecordFromHash(token, hash)
+	if err != nil {
+		return redisRecordBackup{}, err
+	}
+	backup.record = &record
+	return backup, nil
+}
+
+func (r *RedisAccountRepository) restoreRedisBackups(ctx context.Context, backups map[string]redisRecordBackup) error {
+	for _, backup := range backups {
+		if err := r.restoreRedisBackup(ctx, backup); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *RedisAccountRepository) restoreRedisBackup(ctx context.Context, backup redisRecordBackup) error {
+	if current, ok, err := r.getRecordByToken(ctx, backup.token); err != nil {
+		return err
+	} else if ok {
+		_ = r.removeRecordIndexes(ctx, current)
+	}
+	_ = r.store.ZRem(ctx, redisKeyRevisionLog, backup.token)
+	if backup.record == nil {
+		return r.store.Del(ctx, backup.key)
+	}
+	if err := r.store.HSet(ctx, backup.key, backup.hash); err != nil {
+		return err
+	}
+	if err := r.addRecordIndexes(ctx, *backup.record); err != nil {
+		return err
+	}
+	return r.store.ZAdd(ctx, redisKeyRevisionLog, map[string]int{backup.token: backup.record.Revision})
+}
+
+func cloneRedisHash(input map[string]string) map[string]string {
+	if input == nil {
+		return nil
+	}
+	out := make(map[string]string, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func (r *RedisAccountRepository) rollbackRedisUpsert(
+	ctx context.Context,
+	key string,
+	oldRecord *account.AccountRecord,
+	oldHash map[string]string,
+	newRecord account.AccountRecord,
+) error {
+	_ = r.removeRecordIndexes(ctx, newRecord)
+	_ = r.store.ZRem(ctx, redisKeyRevisionLog, newRecord.Token)
+	if oldRecord == nil {
+		return r.store.Del(ctx, key)
+	}
+	if err := r.store.HSet(ctx, key, oldHash); err != nil {
+		return err
+	}
+	if err := r.addRecordIndexes(ctx, *oldRecord); err != nil {
+		return err
+	}
+	return r.store.ZAdd(ctx, redisKeyRevisionLog, map[string]int{oldRecord.Token: oldRecord.Revision})
 }
 
 func (r *RedisAccountRepository) patchRedisAccounts(

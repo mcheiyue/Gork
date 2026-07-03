@@ -13,6 +13,7 @@ type adminBatchRepository interface {
 
 type adminBatchAccountPatch struct {
 	Token          string
+	Pool           string
 	Status         string
 	Tags           []string
 	AddTags        []string
@@ -23,6 +24,9 @@ type adminBatchAccountPatch struct {
 	QuotaAuto      map[string]any
 	QuotaFast      map[string]any
 	QuotaExpert    map[string]any
+	QuotaHeavy     map[string]any
+	QuotaGrok43    map[string]any
+	QuotaConsole   map[string]any
 	UsageUseDelta  int
 	UsageFailDelta int
 	UsageSyncDelta int

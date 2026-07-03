@@ -54,6 +54,10 @@ func (s *goRedisAccountStore) ScanKeys(ctx context.Context, pattern string) ([]s
 	return keys, iter.Err()
 }
 
+func (s *goRedisAccountStore) Del(ctx context.Context, key string) error {
+	return s.client.Del(ctx, key).Err()
+}
+
 func (s *goRedisAccountStore) HGetAll(ctx context.Context, key string) (map[string]string, error) {
 	return s.client.HGetAll(ctx, key).Result()
 }

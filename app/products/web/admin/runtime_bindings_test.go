@@ -49,6 +49,18 @@ func TestBindAccountRuntimeWiresDefaultAdminProviders(t *testing.T) {
 	}
 }
 
+func TestAccountPatchFromAdminLeavesPoolUnchangedWhenOmitted(t *testing.T) {
+	patch := accountPatchFromAdmin(adminBatchAccountPatch{Token: "tok", Status: "disabled"})
+	if patch.Pool != nil {
+		t.Fatalf("omitted pool should not patch account pool: %#v", patch.Pool)
+	}
+
+	patch = accountPatchFromAdmin(adminBatchAccountPatch{Token: "tok", Pool: "super"})
+	if patch.Pool == nil || *patch.Pool != "super" {
+		t.Fatalf("explicit pool was not patched: %#v", patch.Pool)
+	}
+}
+
 type fakeAccountRuntimeRepo struct {
 	page    accountcontrol.AccountPage
 	queries []accountcontrol.ListAccountsQuery

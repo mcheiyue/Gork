@@ -15,11 +15,11 @@ func TestAdminTokensListSerializesFiltersAndFacets(t *testing.T) {
 	repo := &fakeAdminTokensRepo{
 		listResults: []adminAssetsListResult{{Items: []adminAssetsAccount{{
 			Token: "tok-1", Pool: "basic", Status: "active", Tags: []string{"nsfw"},
-			Quota:         map[string]any{"auto": map[string]any{"remaining": 2, "total": 5}},
+			Quota:         map[string]any{"auto": map[string]any{"remaining": 2, "total": 5}, "grok_4_3": map[string]any{"remaining": 9, "total": 10}},
 			UsageUseCount: 3, LastUseAt: int64(123),
 		}}, Total: 1, Page: 2, PageSize: 10, TotalPages: 1, Revision: 7}},
 		facetSnapshot: adminTokensFacetSnapshotFromRecords([]adminAssetsAccount{
-			{Token: "tok-1", Pool: "basic", Status: "active", Tags: []string{"nsfw"}, UsageUseCount: 3, UsageFailCount: 1, Quota: map[string]any{"auto": map[string]any{"remaining": 2}}},
+			{Token: "tok-1", Pool: "basic", Status: "active", Tags: []string{"nsfw"}, UsageUseCount: 3, UsageFailCount: 1, Quota: map[string]any{"auto": map[string]any{"remaining": 2}, "grok_4_3": map[string]any{"remaining": 7}}},
 			{Token: "tok-2", Pool: "super", Status: "disabled"},
 			{Token: "tok-3", Pool: "heavy", Status: "expired"},
 		}),
@@ -39,9 +39,14 @@ func TestAdminTokensListSerializesFiltersAndFacets(t *testing.T) {
 	if row["token"] != "tok-1" || row["pool"] != "basic" || row["last_used_at"].(float64) != 123 {
 		t.Fatalf("row = %#v", row)
 	}
+	quota := row["quota"].(map[string]any)
+	grok43 := quota["grok_4_3"].(map[string]any)
+	if int(grok43["remaining"].(float64)) != 9 || int(grok43["total"].(float64)) != 10 {
+		t.Fatalf("grok 4.3 quota = %#v", quota)
+	}
 	facets := body["facets"].(map[string]any)
 	stats := facets["stats"].(map[string]any)
-	if int(stats["calls"].(float64)) != 4 || int(stats["qa"].(float64)) != 2 {
+	if int(stats["calls"].(float64)) != 4 || int(stats["qa"].(float64)) != 2 || int(stats["qb"].(float64)) != 7 {
 		t.Fatalf("stats = %#v", stats)
 	}
 	if body["revision"].(float64) != 7 {
@@ -96,6 +101,14 @@ func TestAdminTokensEditToggleAndReplacePool(t *testing.T) {
 	resetAdminRouterDepsForTest(t)
 	repo := &fakeAdminTokensRepo{accounts: map[string]adminAssetsAccount{
 		"old": {Token: "old", Pool: "basic", Status: "active", Tags: []string{"keep"}, Ext: map[string]any{"a": "b"}},
+		"same": {
+			Token: "same", Pool: "basic", Status: "disabled", UsageUseCount: 7,
+			Quota: map[string]any{
+				"auto":   map[string]any{"remaining": 9, "total": 10},
+				"fast":   map[string]any{"remaining": 8, "total": 10},
+				"expert": map[string]any{"remaining": 7, "total": 10},
+			},
+		},
 		"one": {Token: "one", Status: "active"},
 		"two": {Token: "two", Status: "active"},
 	}}
@@ -109,6 +122,20 @@ func TestAdminTokensEditToggleAndReplacePool(t *testing.T) {
 	body := decodeAdminBody(t, rec)
 	if body["token"] != "new" || repo.deleted[0][0] != "old" || repo.upserts[0][0].Token != "new" {
 		t.Fatalf("edit body=%#v upserts=%#v deleted=%#v", body, repo.upserts, repo.deleted)
+	}
+	if repo.patches[len(repo.patches)-1][0].Pool != "super" || repo.patches[len(repo.patches)-1][0].QuotaAuto == nil {
+		t.Fatalf("rename state patch missing pool/quota: %#v", repo.patches)
+	}
+
+	upsertCount := len(repo.upserts)
+	rec = adminRequest(http.MethodPut, "/admin/api/tokens/edit", `{"old_token":"same","token":"same","pool":"super"}`, "Bearer gork")
+	body = decodeAdminBody(t, rec)
+	patch := repo.patches[len(repo.patches)-1][0]
+	if body["token"] != "same" || len(repo.upserts) != upsertCount || patch.Token != "same" || patch.Pool != "super" || patch.Status != "disabled" || patch.UsageUseDelta != 7 {
+		t.Fatalf("same-token edit body=%#v upserts=%#v patch=%#v", body, repo.upserts, patch)
+	}
+	if patch.QuotaAuto["remaining"] != 9 || patch.QuotaFast["remaining"] != 8 || patch.QuotaExpert["remaining"] != 7 {
+		t.Fatalf("same-token edit quota patch = %#v", patch)
 	}
 
 	rec = adminRequest(http.MethodPost, "/admin/api/tokens/disabled", `{"token":"one","disabled":true}`, "Bearer gork")

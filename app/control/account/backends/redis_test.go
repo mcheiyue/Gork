@@ -226,12 +226,13 @@ func TestRedisAccountRepositoryInitializeRebuildsMissingIndexesForExistingRecord
 }
 
 type fakeRedisAccountStore struct {
-	strings  map[string]string
-	hashes   map[string]map[string]string
-	sets     map[string]map[string]struct{}
-	zsets    map[string]map[string]int
-	closed   bool
-	failScan bool
+	strings     map[string]string
+	hashes      map[string]map[string]string
+	sets        map[string]map[string]struct{}
+	zsets       map[string]map[string]int
+	closed      bool
+	failScan    bool
+	failHSetKey string
 }
 
 var errFakeRedisScanForbidden = errors.New("scan should not be used")
@@ -283,6 +284,11 @@ func (s *fakeRedisAccountStore) ScanKeys(_ context.Context, pattern string) ([]s
 	return keys, nil
 }
 
+func (s *fakeRedisAccountStore) Del(_ context.Context, key string) error {
+	delete(s.hashes, key)
+	return nil
+}
+
 func (s *fakeRedisAccountStore) HGetAll(_ context.Context, key string) (map[string]string, error) {
 	src := s.hashes[key]
 	dst := map[string]string{}
@@ -299,6 +305,10 @@ func (s *fakeRedisAccountStore) HGet(_ context.Context, key string, field string
 }
 
 func (s *fakeRedisAccountStore) HSet(_ context.Context, key string, mapping map[string]string) error {
+	if s.failHSetKey == key {
+		s.failHSetKey = ""
+		return errors.New("forced hset failure")
+	}
 	if s.hashes[key] == nil {
 		s.hashes[key] = map[string]string{}
 	}

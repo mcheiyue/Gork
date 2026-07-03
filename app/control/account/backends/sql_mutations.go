@@ -60,18 +60,36 @@ func (r *SQLAccountRepository) ReplacePool(
 	if err := r.ensureInitialized(ctx); err != nil {
 		return account.AccountMutationResult{}, err
 	}
-	deleted, err := r.deletePoolForReplace(ctx, command.Pool)
+	r.mutationMux.Lock()
+	defer r.mutationMux.Unlock()
+	tx, err := r.beginSQLMutation(ctx)
 	if err != nil {
 		return account.AccountMutationResult{}, err
 	}
-	upserted, err := r.UpsertAccounts(ctx, command.Upserts)
+	defer tx.Rollback()
+	deletedRev, err := bumpSQLRevision(ctx, tx, r.dialect)
 	if err != nil {
+		return account.AccountMutationResult{}, err
+	}
+	deleted, err := deleteSQLPool(ctx, tx, r.dialect, command.Pool, deletedRev)
+	if err != nil {
+		return account.AccountMutationResult{}, err
+	}
+	upsertRev, err := bumpSQLRevision(ctx, tx, r.dialect)
+	if err != nil {
+		return account.AccountMutationResult{}, err
+	}
+	upserted, err := upsertSQLAccounts(ctx, tx, r.dialect, command.Upserts, upsertRev)
+	if err != nil {
+		return account.AccountMutationResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return account.AccountMutationResult{}, err
 	}
 	return account.AccountMutationResult{
-		Upserted: upserted.Upserted,
+		Upserted: upserted,
 		Deleted:  deleted,
-		Revision: upserted.Revision,
+		Revision: upsertRev,
 	}, nil
 }
 

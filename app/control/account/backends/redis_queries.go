@@ -38,11 +38,11 @@ func (r *RedisAccountRepository) ScanChanges(
 	if err != nil {
 		return account.AccountChangeSet{}, err
 	}
-	tokens, err := r.store.ZRangeByScore(ctx, redisKeyRevisionLog, sinceRevision, limit)
+	tokens, err := r.store.ZRangeByScore(ctx, redisKeyRevisionLog, sinceRevision, 0)
 	if err != nil {
 		return account.AccountChangeSet{}, err
 	}
-	return r.changeSetForTokens(ctx, tokens, revision, limit)
+	return r.changeSetForTokens(ctx, tokens, sinceRevision, revision)
 }
 
 func (r *RedisAccountRepository) GetAccounts(
@@ -80,11 +80,13 @@ func (r *RedisAccountRepository) ListAccounts(
 func (r *RedisAccountRepository) changeSetForTokens(
 	ctx context.Context,
 	tokens []string,
+	sinceRevision int,
 	revision int,
-	limit int,
 ) (account.AccountChangeSet, error) {
 	changes := account.NewAccountChangeSet()
 	changes.Revision = revision
+	records := map[string]account.AccountRecord{}
+	nextRevision := 0
 	for _, token := range tokens {
 		record, ok, err := r.getRecordByToken(ctx, token)
 		if err != nil {
@@ -93,13 +95,30 @@ func (r *RedisAccountRepository) changeSetForTokens(
 		if !ok {
 			continue
 		}
+		if record.Revision <= sinceRevision {
+			continue
+		}
+		records[token] = record
+		if nextRevision == 0 || record.Revision < nextRevision {
+			nextRevision = record.Revision
+		}
+	}
+	if nextRevision == 0 {
+		return changes, nil
+	}
+	changes.Revision = nextRevision
+	for _, token := range tokens {
+		record, ok := records[token]
+		if !ok || record.Revision != nextRevision {
+			continue
+		}
 		if record.IsDeleted() {
 			changes.DeletedTokens = append(changes.DeletedTokens, record.Token)
 		} else {
 			changes.Items = append(changes.Items, record)
 		}
 	}
-	changes.HasMore = len(tokens) == limit
+	changes.HasMore = nextRevision < revision
 	return changes, nil
 }
 

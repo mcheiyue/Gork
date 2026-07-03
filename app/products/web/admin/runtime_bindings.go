@@ -215,6 +215,7 @@ func accountPatchFromAdmin(patch adminBatchAccountPatch) accountcontrol.AccountP
 	status := accountStatusPtr(patch.Status)
 	return accountcontrol.AccountPatch{
 		Token:          patch.Token,
+		Pool:           stringPtr(patch.Pool),
 		Status:         status,
 		Tags:           append([]string(nil), patch.Tags...),
 		AddTags:        append([]string(nil), patch.AddTags...),
@@ -222,6 +223,9 @@ func accountPatchFromAdmin(patch adminBatchAccountPatch) accountcontrol.AccountP
 		QuotaAuto:      cloneRuntimeMap(patch.QuotaAuto),
 		QuotaFast:      cloneRuntimeMap(patch.QuotaFast),
 		QuotaExpert:    cloneRuntimeMap(patch.QuotaExpert),
+		QuotaHeavy:     cloneRuntimeMap(patch.QuotaHeavy),
+		QuotaGrok43:    cloneRuntimeMap(patch.QuotaGrok43),
+		QuotaConsole:   cloneRuntimeMap(patch.QuotaConsole),
 		UsageUseDelta:  intPtrIfNonZero(patch.UsageUseDelta),
 		UsageFailDelta: intPtrIfNonZero(patch.UsageFailDelta),
 		UsageSyncDelta: intPtrIfNonZero(patch.UsageSyncDelta),

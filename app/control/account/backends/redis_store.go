@@ -7,6 +7,7 @@ type RedisAccountStore interface {
 	SetNX(context.Context, string, string) (bool, error)
 	Get(context.Context, string) (string, bool, error)
 	ScanKeys(context.Context, string) ([]string, error)
+	Del(context.Context, string) error
 	HGetAll(context.Context, string) (map[string]string, error)
 	HGet(context.Context, string, string) (string, bool, error)
 	HSet(context.Context, string, map[string]string) error

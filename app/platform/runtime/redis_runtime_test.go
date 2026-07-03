@@ -195,16 +195,21 @@ func TestRedisRuntimeStoreCloseIgnoresMissingAClose(t *testing.T) {
 }
 
 type fakeRuntimeRedis struct {
-	value         any
-	acquired      bool
-	closed        bool
-	setKey        string
-	setValue      string
-	setPX         int
-	expireKey     string
-	expireSeconds int
-	deletedKey    string
-	locks         map[string]string
+	value              any
+	acquired           bool
+	closed             bool
+	setKey             string
+	setValue           string
+	setPX              int
+	expireKey          string
+	expireSeconds      int
+	deletedKey         string
+	compareExpireKey   string
+	compareExpireOwner string
+	compareExpireTTLMS int
+	compareDeleteKey   string
+	compareDeleteOwner string
+	locks              map[string]string
 }
 
 func (r *fakeRuntimeRedis) Get(_ context.Context, key string) (any, error) {
@@ -246,6 +251,39 @@ func (r *fakeRuntimeRedis) Delete(_ context.Context, key string) error {
 	return nil
 }
 
+func (r *fakeRuntimeRedis) CompareExpire(_ context.Context, key string, owner string, ttlMS int) (bool, error) {
+	r.compareExpireKey = key
+	r.compareExpireOwner = owner
+	r.compareExpireTTLMS = ttlMS
+	current, _ := decodeRedisRuntimeValue(r.value)
+	if r.locks != nil {
+		current = r.locks[key]
+	}
+	if current != owner {
+		return false, nil
+	}
+	r.expireKey = key
+	r.expireSeconds = maxRuntimeInt(1, ttlMS/1000)
+	return true, nil
+}
+
+func (r *fakeRuntimeRedis) CompareDelete(_ context.Context, key string, owner string) (bool, error) {
+	r.compareDeleteKey = key
+	r.compareDeleteOwner = owner
+	current, _ := decodeRedisRuntimeValue(r.value)
+	if r.locks != nil {
+		current = r.locks[key]
+	}
+	if current != owner {
+		return false, nil
+	}
+	r.deletedKey = key
+	if r.locks != nil {
+		delete(r.locks, key)
+	}
+	return true, nil
+}
+
 func (r *fakeRuntimeRedis) AClose(context.Context) error {
 	r.closed = true
 	return nil
@@ -267,4 +305,12 @@ func (noCloseRuntimeRedis) Expire(context.Context, string, int) error {
 
 func (noCloseRuntimeRedis) Delete(context.Context, string) error {
 	return nil
+}
+
+func (noCloseRuntimeRedis) CompareExpire(context.Context, string, string, int) (bool, error) {
+	return false, nil
+}
+
+func (noCloseRuntimeRedis) CompareDelete(context.Context, string, string) (bool, error) {
+	return false, nil
 }
