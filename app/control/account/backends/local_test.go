@@ -2,11 +2,38 @@ package backends
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	account "github.com/dslzl/gork/app/control/account"
 )
+
+type fakeLocalPragmaDB struct {
+	queries []string
+}
+
+func (db *fakeLocalPragmaDB) ExecContext(_ context.Context, query string, _ ...any) (sql.Result, error) {
+	db.queries = append(db.queries, query)
+	if strings.Contains(query, "journal_mode=WAL") {
+		return nil, errors.New("wal unsupported")
+	}
+	return nil, nil
+}
+
+func TestConfigureLocalPragmasFallsBackWhenWALUnsupported(t *testing.T) {
+	fake := &fakeLocalPragmaDB{}
+
+	if err := configureLocalPragmas(context.Background(), fake); err != nil {
+		t.Fatalf("configureLocalPragmas returned error: %v", err)
+	}
+
+	if len(fake.queries) != 4 || fake.queries[0] != "PRAGMA journal_mode=WAL" || fake.queries[3] != "PRAGMA foreign_keys=ON" {
+		t.Fatalf("pragma sequence = %#v", fake.queries)
+	}
+}
 
 func TestLocalAccountRepositoryLifecycle(t *testing.T) {
 	ctx := context.Background()
@@ -115,6 +142,13 @@ func TestLocalAccountRepositoryListAndReplacePool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertAccounts returned error: %v", err)
 	}
+	_, err = repo.PatchAccounts(ctx, []account.AccountPatch{{
+		Token:       "super-a",
+		QuotaGrok43: map[string]any{"remaining": float64(11), "total": float64(20)},
+	}})
+	if err != nil {
+		t.Fatalf("PatchAccounts returned error: %v", err)
+	}
 
 	pool := "basic"
 	page, err := repo.ListAccounts(ctx, account.ListAccountsQuery{
@@ -132,7 +166,7 @@ func TestLocalAccountRepositoryListAndReplacePool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListFacets returned error: %v", err)
 	}
-	if facets.Pools["basic"] != 2 || facets.Pools["super"] != 1 || facets.Status["active"] != 3 || facets.NSFW["disabled"] != 3 {
+	if facets.Pools["basic"] != 2 || facets.Pools["super"] != 1 || facets.Status["active"] != 3 || facets.NSFW["disabled"] != 3 || facets.Stats["qb"] != 11 {
 		t.Fatalf("ListFacets counts = %#v", facets)
 	}
 
@@ -142,8 +176,8 @@ func TestLocalAccountRepositoryListAndReplacePool(t *testing.T) {
 			{Token: "basic-new", Pool: "basic", Tags: []string{"x"}},
 		},
 	})
-	if err != nil || replaced.Upserted != 1 || replaced.Deleted != 2 || replaced.Revision != 3 {
-		t.Fatalf("ReplacePool = %#v/%v, want 1 upsert 2 deleted rev 3", replaced, err)
+	if err != nil || replaced.Upserted != 1 || replaced.Deleted != 2 || replaced.Revision != 4 {
+		t.Fatalf("ReplacePool = %#v/%v, want 1 upsert 2 deleted rev 4", replaced, err)
 	}
 	snapshot, err := repo.RuntimeSnapshot(ctx)
 	if err != nil {

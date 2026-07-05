@@ -8,7 +8,7 @@ import (
 )
 
 const accountFacetColumns = `
-pool, status, tags, quota_auto, quota_fast, quota_expert, quota_heavy, quota_console,
+pool, status, tags, quota_auto, quota_fast, quota_expert, quota_heavy, quota_grok_4_3, quota_console,
 usage_use_count, usage_fail_count`
 
 type accountFacetRow struct {
@@ -19,6 +19,7 @@ type accountFacetRow struct {
 	QuotaFast      string
 	QuotaExpert    string
 	QuotaHeavy     string
+	QuotaGrok43    string
 	QuotaConsole   string
 	UsageUseCount  int
 	UsageFailCount int
@@ -63,6 +64,7 @@ func scanAccountFacetRows(rows *sql.Rows) (account.AccountFacetSnapshot, error) 
 			&row.QuotaFast,
 			&row.QuotaExpert,
 			&row.QuotaHeavy,
+			&row.QuotaGrok43,
 			&row.QuotaConsole,
 			&row.UsageUseCount,
 			&row.UsageFailCount,
@@ -119,6 +121,9 @@ func applyAccountFacetRow(snapshot *account.AccountFacetSnapshot, row accountFac
 		return err
 	}
 	if err := addFacetQuotaRemaining(snapshot, "qh", row.QuotaHeavy); err != nil {
+		return err
+	}
+	if err := addFacetQuotaRemaining(snapshot, "qb", row.QuotaGrok43); err != nil {
 		return err
 	}
 	if err := addFacetQuotaRemaining(snapshot, "qc", row.QuotaConsole); err != nil {

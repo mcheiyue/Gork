@@ -11,6 +11,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+type localPragmaExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 type LocalAccountRepository struct {
 	path string
 	lock sync.Mutex
@@ -59,14 +63,24 @@ func (r *LocalAccountRepository) Close(context.Context) error {
 }
 
 func configureLocalDB(ctx context.Context, db *sql.DB) error {
-	pragmas := []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA synchronous=NORMAL",
-		"PRAGMA busy_timeout=5000",
-		"PRAGMA foreign_keys=ON",
+	return configureLocalPragmas(ctx, db)
+}
+
+func configureLocalPragmas(ctx context.Context, db localPragmaExecer) error {
+	pragmas := []struct {
+		query    string
+		optional bool
+	}{
+		{query: "PRAGMA journal_mode=WAL", optional: true},
+		{query: "PRAGMA synchronous=NORMAL"},
+		{query: "PRAGMA busy_timeout=5000"},
+		{query: "PRAGMA foreign_keys=ON"},
 	}
 	for _, pragma := range pragmas {
-		if _, err := db.ExecContext(ctx, pragma); err != nil {
+		if _, err := db.ExecContext(ctx, pragma.query); err != nil {
+			if pragma.optional {
+				continue
+			}
 			return err
 		}
 	}
