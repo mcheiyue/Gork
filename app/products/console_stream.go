@@ -11,11 +11,11 @@ import (
 	"time"
 
 	controlproxy "github.com/dslzl/gork/app/control/proxy"
+	proxydataplane "github.com/dslzl/gork/app/dataplane/proxy"
 	"github.com/dslzl/gork/app/dataplane/reverse/protocol"
 	reverseruntime "github.com/dslzl/gork/app/dataplane/reverse/runtime"
 	"github.com/dslzl/gork/app/dataplane/reverse/transport"
 	"github.com/dslzl/gork/app/platform"
-	"github.com/dslzl/gork/app/platform/config"
 	"github.com/dslzl/gork/app/platform/logging"
 )
 
@@ -23,39 +23,8 @@ var consoleStreamPosterFactory = func() protocol.ConsoleStreamPoster {
 	return consoleHTTPPoster{}
 }
 
-// globalConfigAdapter wraps config.GlobalConfig to implement proxy.DirectoryConfig.
-// config.GlobalConfig.GetList returns []any, but DirectoryConfig needs []string.
-type globalConfigAdapter struct{}
-
-func (globalConfigAdapter) GetString(key, defaultValue string) string {
-	return config.GlobalConfig.GetStr(key, defaultValue)
-}
-
-func (globalConfigAdapter) GetList(key string, defaultValue []string) []string {
-	anyList := config.GlobalConfig.GetList(key, nil)
-	if len(anyList) == 0 {
-		return defaultValue
-	}
-	result := make([]string, 0, len(anyList))
-	for _, v := range anyList {
-		if s, ok := v.(string); ok {
-			result = append(result, s)
-		}
-	}
-	if len(result) == 0 {
-		return defaultValue
-	}
-	return result
-}
-
-func (globalConfigAdapter) GetInt(key string, defaultValue int) int {
-	return config.GlobalConfig.GetInt(key, defaultValue)
-}
-
 var getProxyDirectory = func(ctx context.Context) (*controlproxy.ProxyDirectory, error) {
-	return controlproxy.GetProxyDirectory(ctx, controlproxy.DirectoryOptions{
-		Config: globalConfigAdapter{},
-	})
+	return controlproxy.GetProxyDirectory(ctx, proxydataplane.ProductionDirectoryOptions())
 }
 
 func StreamConsoleChat(ctx context.Context, token string, payload map[string]any, timeoutS float64) ([]protocol.ConsoleStreamEvent, error) {

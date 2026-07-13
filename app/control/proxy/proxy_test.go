@@ -4,12 +4,43 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 type fakeDirectoryConfig struct {
 	strings map[string]string
 	lists   map[string][]string
 	ints    map[string]int
+}
+
+func TestProxyDirectoryObservabilityStatusSummarizesClearanceBundles(t *testing.T) {
+	refreshedAt := time.UnixMilli(90_000).UnixMilli()
+	expiresAt := time.UnixMilli(150_000).UnixMilli()
+	directory := NewProxyDirectory(DirectoryOptions{
+		Clock: func() int64 { return time.UnixMilli(120_000).UnixMilli() },
+	})
+	key := BundleKey{Affinity: "direct", ClearanceHost: "grok.com"}
+	directory.bundles[key] = ClearanceBundle{
+		BundleID:         "bundle-1",
+		State:            ClearanceBundleValid,
+		AffinityKey:      "direct",
+		ClearanceHost:    "grok.com",
+		LastRefreshAt:    &refreshedAt,
+		ExpiresAt:        &expiresAt,
+		RefreshCount:     2,
+		LastRefreshError: "challenge",
+	}
+
+	status := directory.ObservabilityStatus()
+	if status["bundle_count"] != 1 {
+		t.Fatalf("status = %#v", status)
+	}
+	bundles := status["bundles"].([]map[string]any)
+	got := bundles[0]
+	if got["age_ms"] != int64(30_000) || got["expires_in_ms"] != int64(30_000) ||
+		got["refresh_count"] != 2 || got["last_refresh_error"] != "challenge" {
+		t.Fatalf("bundle status = %#v", got)
+	}
 }
 
 func (f fakeDirectoryConfig) GetString(key, defaultValue string) string {

@@ -50,6 +50,9 @@ func NewProxyRuntime(directory ProxyRuntimeDirectory) *ProxyRuntime {
 }
 
 func GetProxyRuntime(ctx context.Context, options ...controlproxy.DirectoryOptions) (*ProxyRuntime, error) {
+	if len(options) == 0 {
+		options = []controlproxy.DirectoryOptions{ProductionDirectoryOptions()}
+	}
 	directory, err := controlproxy.GetProxyDirectory(ctx, options...)
 	if err != nil {
 		return nil, err
