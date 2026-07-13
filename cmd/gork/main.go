@@ -17,6 +17,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if handled, code, err := runGorkCommand(ctx, os.Args[1:], os.Stdout, os.Stderr); handled {
+		if err != nil {
+			log.Printf("command failed: %v", err)
+		}
+		os.Exit(code)
+	}
+
 	application := grokapp.NewApp(grokapp.AppOptions{})
 	if err := application.Start(ctx); err != nil {
 		log.Fatalf("startup failed: %v", err)
