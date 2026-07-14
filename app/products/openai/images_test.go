@@ -222,8 +222,71 @@ func TestImagesGenerateNonStreamUsesImagineEvents(t *testing.T) {
 		!strings.Contains(data[1]["url"].(string), "sig=") {
 		t.Fatalf("data=%#v", data)
 	}
-	if dir.releases != 1 || len(dir.feedbacks) != 0 {
-		t.Fatalf("dir releases=%d feedbacks=%#v", dir.releases, dir.feedbacks)
+	if dir.releases != 1 {
+		t.Fatalf("dir releases=%d", dir.releases)
+	}
+	if len(dir.feedbacks) != 1 || dir.feedbacks[0].Kind != feedbackKindSuccess || dir.feedbacks[0].Token != "tok-img" {
+		t.Fatalf("feedbacks=%#v", dir.feedbacks)
+	}
+}
+
+func TestImagesGenerateRetriesOnUpstreamRateLimit(t *testing.T) {
+	resetChatDepsForTest(t)
+	resetImagesDepsForTest(t)
+	dir := &fakeChatDirectory{accounts: []chatAccount{
+		{Token: "tokA", ModeID: model.ModeAuto},
+		{Token: "tokB", ModeID: model.ModeAuto},
+	}}
+	refresh := &fakeChatRefreshService{}
+	chatDirectoryProvider = func() chatDirectory { return dir }
+	chatRefreshService = func() chatRefreshProvider { return refresh }
+	chatSelectionMaxRetries = func() int { return 1 }
+	chatRetryConfig = func() map[string]any { return map[string]any{"retry.on_codes": "429"} }
+	imageAppURL = func() string { return "https://api.local" }
+	imagePublicProxyEnabled = func() bool { return false }
+	imageNowUnix = func() int64 { return 99 }
+	imageResponseID = func() string { return "chatcmpl-retry" }
+	imageStreamImages = func(_ context.Context, token, prompt string, options transport.ImagineOptions) ([]map[string]any, error) {
+		if prompt != "draw" {
+			t.Fatalf("prompt=%q", prompt)
+		}
+		if token == "tokA" {
+			return nil, platform.NewUpstreamError("rate limited", 429, "")
+		}
+		if token != "tokB" {
+			t.Fatalf("unexpected token=%q", token)
+		}
+		return []map[string]any{
+			{"type": "completed", "image_id": "img1", "url": "https://imagine-public.grok.com/images/ok.png", "is_final": true},
+		}, nil
+	}
+
+	result, err := GenerateImages(context.Background(), imageGenerationOptions{
+		Model:          "grok-imagine-image",
+		Prompt:         "draw",
+		N:              1,
+		ResponseFormat: "url",
+	})
+	if err != nil {
+		t.Fatalf("GenerateImages err=%v", err)
+	}
+	data := result.Response["data"].([]map[string]any)
+	if len(data) != 1 || data[0]["url"] != "https://imagine-public.grok.com/images/ok.png" {
+		t.Fatalf("data=%#v", data)
+	}
+	if !reflect.DeepEqual(dir.excludes, [][]string{{}, {"tokA"}}) {
+		t.Fatalf("excludes=%#v", dir.excludes)
+	}
+	if dir.releases != 2 {
+		t.Fatalf("releases=%d", dir.releases)
+	}
+	if len(dir.feedbacks) != 2 ||
+		dir.feedbacks[0].Kind != feedbackKindRateLimited || dir.feedbacks[0].Token != "tokA" ||
+		dir.feedbacks[1].Kind != feedbackKindSuccess || dir.feedbacks[1].Token != "tokB" {
+		t.Fatalf("feedbacks=%#v", dir.feedbacks)
+	}
+	if refresh.recordCalls != 1 || refresh.onDemandCalls != 1 {
+		t.Fatalf("refresh=%#v", refresh)
 	}
 }
 
