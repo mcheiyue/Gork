@@ -98,6 +98,8 @@ func NewRouter() http.Handler {
 	}))
 	mux.HandleFunc("/admin/api/build-accounts/import", adminProtected(http.MethodPost, handleAdminBuildAccountsImport))
 	mux.HandleFunc("/admin/api/build-accounts/status", adminProtected(http.MethodPost, handleAdminBuildAccountsStatus))
+	mux.HandleFunc("/admin/api/build-accounts/device/start", adminProtected(http.MethodPost, handleAdminBuildDeviceStart))
+	mux.HandleFunc("/admin/api/build-accounts/device/poll", adminProtected(http.MethodPost, handleAdminBuildDevicePoll))
 	return mux
 }
 
