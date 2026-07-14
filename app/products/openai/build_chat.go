@@ -94,11 +94,30 @@ func BuildCompletions(ctx context.Context, options chatCompletionOptions) (chatC
 	if err != nil {
 		return chatCompletionResult{}, err
 	}
+	accounts = filterBuildAccountsByBilling(ctx, dir, accounts)
 	if len(accounts) == 0 {
 		return chatCompletionResult{}, platform.NewRateLimitError("No available Build accounts")
 	}
 
 	return runBuildCompletion(ctx, options, upstream, stream, accounts, dir, buildAPIClient(), buildOAuthClient())
+}
+
+// filterBuildAccountsByBilling 跳过已同步且额度耗尽的账号，并标记 cooling。
+func filterBuildAccountsByBilling(ctx context.Context, dir buildAccountDirectory, accounts []buildaccount.Account) []buildaccount.Account {
+	if len(accounts) == 0 {
+		return accounts
+	}
+	out := make([]buildaccount.Account, 0, len(accounts))
+	for _, acc := range accounts {
+		if acc.Billing.QuotaExhausted() {
+			if dir != nil {
+				_ = dir.SetStatus(ctx, acc.ID, buildaccount.StatusCooling, "billing quota exhausted")
+			}
+			continue
+		}
+		out = append(out, acc)
+	}
+	return out
 }
 
 func finishBuildChat(modelName string, raw []byte) (chatCompletionResult, error) {
