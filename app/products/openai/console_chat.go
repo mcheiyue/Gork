@@ -3,7 +3,6 @@ package openai
 import (
 	"context"
 	"log/slog"
-	"math/rand"
 	"time"
 
 	"github.com/dslzl/gork/app/control/model"
@@ -33,6 +32,11 @@ func ConsoleCompletions(ctx context.Context, options chatCompletionOptions) (cha
 		return chatCompletionResult{}, err
 	}
 
+	cooldownKey := consoleModelCooldownKey(options.Model)
+	if rem := consoleCircuitBreaker.remainingCooldown(cooldownKey); rem > 0 {
+		return chatCompletionResult{}, consoleRateLimitCooldownError(cooldownKey, rem, nil)
+	}
+
 	directory := chatDirectoryProvider()
 	if directory == nil {
 		return chatCompletionResult{}, platform.NewRateLimitError("Account directory not initialised")
@@ -48,6 +52,9 @@ func ConsoleCompletions(ctx context.Context, options chatCompletionOptions) (cha
 	timeoutS := chatTimeoutSeconds()
 	excluded := []string{}
 	var lastErr error
+	rpmRetries := 0
+	rpsRetries := 0
+	unknown429Retries := 0
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		account, ok, err := directory.ReserveChatAccount(ctx, spec, excluded)
@@ -71,28 +78,40 @@ func ConsoleCompletions(ctx context.Context, options chatCompletionOptions) (cha
 		}
 		lastErr = err
 
-		// On 429: parse response to determine rate limit type, then retry with appropriate delay
+		// 429：解析 rps/rpm → 武装冷却 → 有限换号，禁止 60s+ 空转
 		if isConsoleRateLimitError(err) {
 			errBody := extract429Body(err)
 			info := parseConsole429Info(errBody)
-			slog.Info("console 429 parsed", "per_second_hit", info.IsPerSecondHit, "per_minute_hit", info.IsPerMinuteHit, "ps_actual", info.PerSecondActual, "pm_actual", info.PerMinuteActual)
-			consoleCircuitBreaker.trip()
+			cooldown := consoleCircuitBreaker.tripModel(cooldownKey, info)
+			slog.Info("console 429 parsed",
+				"per_second_hit", info.IsPerSecondHit, "per_minute_hit", info.IsPerMinuteHit,
+				"ps_actual", info.PerSecondActual, "pm_actual", info.PerMinuteActual,
+				"cooldown_sec", int(cooldown.Seconds()), "key", cooldownKey)
 
-			if attempt < maxRetries {
-				var delay time.Duration
-				if info.IsPerMinuteHit {
-					// Per-minute: team-level limit, wait longer (5-10s), max 2 retries
-					delay = time.Duration(5000+rand.Intn(5000)) * time.Millisecond
-					if attempt >= 2 {
-						return chatCompletionResult{}, err
-					}
-				} else if info.IsPerSecondHit {
-					// Per-second: wait 2s for window to clear
-					delay = 2 * time.Second
-				} else {
-					// Unknown 429: default 2s delay
-					delay = 2 * time.Second
+			var delay time.Duration
+			allowRetry := false
+			switch {
+			case info.IsPerMinuteHit:
+				// team RPM：换号基本无效，最多 1 次短间隔重试
+				if attempt < maxRetries && rpmRetries < 1 {
+					rpmRetries++
+					delay = time.Second
+					allowRetry = true
 				}
+			case info.IsPerSecondHit:
+				if attempt < maxRetries && rpsRetries < 2 {
+					rpsRetries++
+					delay = 2 * time.Second
+					allowRetry = true
+				}
+			default:
+				if attempt < maxRetries && unknown429Retries < 1 {
+					unknown429Retries++
+					delay = 2 * time.Second
+					allowRetry = true
+				}
+			}
+			if allowRetry {
 				select {
 				case <-time.After(delay):
 					excluded = append(excluded, account.Token)
@@ -101,7 +120,7 @@ func ConsoleCompletions(ctx context.Context, options chatCompletionOptions) (cha
 					return chatCompletionResult{}, ctx.Err()
 				}
 			}
-			return chatCompletionResult{}, err
+			return chatCompletionResult{}, consoleRateLimitCooldownError(cooldownKey, cooldown, &info)
 		}
 
 		if shouldRetryUpstream(err, retryCodes) && attempt < maxRetries {

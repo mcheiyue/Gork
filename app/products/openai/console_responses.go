@@ -29,10 +29,9 @@ func ConsoleResponses(ctx context.Context, options consoleResponseOptions) (chat
 		return chatCompletionResult{}, err
 	}
 
-	if consoleCircuitBreaker.blocked() {
-		remaining := consoleCircuitBreaker.remainingCooldown()
-		return chatCompletionResult{}, platform.NewRateLimitError(
-			"Console rate limit cooldown active, retry after " + remaining.Truncate(time.Second).String())
+	cooldownKey := consoleModelCooldownKey(options.Model)
+	if rem := consoleCircuitBreaker.remainingCooldown(cooldownKey); rem > 0 {
+		return chatCompletionResult{}, consoleRateLimitCooldownError(cooldownKey, rem, nil)
 	}
 
 	directory := chatDirectoryProvider()
@@ -56,6 +55,9 @@ func ConsoleResponses(ctx context.Context, options consoleResponseOptions) (chat
 	retryCodes := configuredRetryCodes(chatRetryConfig())
 	excluded := []string{}
 	var lastErr error
+	rpmRetries := 0
+	rpsRetries := 0
+	unknown429Retries := 0
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		account, ok, err := directory.ReserveChatAccount(ctx, spec, excluded)
@@ -74,8 +76,42 @@ func ConsoleResponses(ctx context.Context, options consoleResponseOptions) (chat
 		lastErr = err
 
 		if isConsoleRateLimitError(err) {
-			consoleCircuitBreaker.trip()
-			return chatCompletionResult{}, err
+			errBody := extract429Body(err)
+			info := parseConsole429Info(errBody)
+			cooldown := consoleCircuitBreaker.tripModel(cooldownKey, info)
+
+			var delay time.Duration
+			allowRetry := false
+			switch {
+			case info.IsPerMinuteHit:
+				if attempt < maxRetries && rpmRetries < 1 {
+					rpmRetries++
+					delay = time.Second
+					allowRetry = true
+				}
+			case info.IsPerSecondHit:
+				if attempt < maxRetries && rpsRetries < 2 {
+					rpsRetries++
+					delay = 2 * time.Second
+					allowRetry = true
+				}
+			default:
+				if attempt < maxRetries && unknown429Retries < 1 {
+					unknown429Retries++
+					delay = 2 * time.Second
+					allowRetry = true
+				}
+			}
+			if allowRetry {
+				select {
+				case <-time.After(delay):
+					excluded = append(excluded, account.Token)
+					continue
+				case <-ctx.Done():
+					return chatCompletionResult{}, ctx.Err()
+				}
+			}
+			return chatCompletionResult{}, consoleRateLimitCooldownError(cooldownKey, cooldown, &info)
 		}
 
 		if shouldRetryUpstream(err, retryCodes) && attempt < maxRetries {
