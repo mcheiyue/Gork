@@ -59,13 +59,19 @@ func handleAdminBuildAccountsList(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, err)
 		return
 	}
+	filter := parseBuildAccountListFilter(r)
+	now := time.Now().UTC()
 	items := make([]map[string]any, 0, len(accounts))
 	for _, acc := range accounts {
+		if !matchBuildAccountFilter(acc, filter, now) {
+			continue
+		}
 		items = append(items, serializeBuildAccount(acc))
 	}
 	writeAdminJSON(w, http.StatusOK, map[string]any{
 		"accounts": items,
 		"total":    len(items),
+		"facets":   buildAccountFacets(accounts, now),
 	})
 }
 

@@ -97,10 +97,14 @@ func NewRouter() http.Handler {
 		http.MethodGet: handleAdminBuildAccountsList, http.MethodDelete: handleAdminBuildAccountsDelete,
 	}))
 	mux.HandleFunc("/admin/api/build-accounts/import", adminProtected(http.MethodPost, handleAdminBuildAccountsImport))
+	mux.HandleFunc("/admin/api/build-accounts/import-async", adminProtected(http.MethodPost, handleAdminBuildAccountsImportAsync))
 	mux.HandleFunc("/admin/api/build-accounts/status", adminProtected(http.MethodPost, handleAdminBuildAccountsStatus))
 	mux.HandleFunc("/admin/api/build-accounts/device/start", adminProtected(http.MethodPost, handleAdminBuildDeviceStart))
 	mux.HandleFunc("/admin/api/build-accounts/device/poll", adminProtected(http.MethodPost, handleAdminBuildDevicePoll))
 	mux.HandleFunc("/admin/api/build-accounts/billing", adminProtected(http.MethodPost, handleAdminBuildAccountsBilling))
+	mux.HandleFunc("/admin/api/build-accounts/billing/batch", adminProtected(http.MethodPost, handleAdminBuildAccountsBillingBatch))
+	mux.HandleFunc("/admin/api/build-accounts/refresh/batch", adminProtected(http.MethodPost, handleAdminBuildAccountsRefreshBatch))
+	mux.HandleFunc("/admin/api/build-accounts/cleanup", adminProtected(http.MethodPost, handleAdminBuildAccountsCleanup))
 	return mux
 }
 

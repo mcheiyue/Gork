@@ -189,3 +189,77 @@ func TestSerializeBuildAccountHidesTokens(t *testing.T) {
 		t.Fatalf("flags=%#v", item)
 	}
 }
+
+func TestAdminBuildAccountsListFilter(t *testing.T) {
+	store := &fakeBuildAccountStore{accounts: []buildaccount.Account{
+		{ID: 1, Name: "ok", UserID: "u1", Status: buildaccount.StatusActive, AccessToken: "a", ExpiresAt: time.Now().UTC().Add(time.Hour)},
+		{ID: 2, Name: "old", UserID: "u2", Status: buildaccount.StatusDisabled, AccessToken: "b", ExpiresAt: time.Now().UTC().Add(-time.Hour)},
+	}}
+	restore := SetBuildAccountStore(store)
+	defer restore()
+
+	rec := httptest.NewRecorder()
+	handleAdminBuildAccountsList(rec, httptest.NewRequest(http.MethodGet, "/admin/api/build-accounts?status=disabled", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var listed struct {
+		Accounts []map[string]any `json:"accounts"`
+		Total    int              `json:"total"`
+		Facets   map[string]any   `json:"facets"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if listed.Total != 1 || listed.Accounts[0]["name"] != "old" {
+		t.Fatalf("listed=%#v", listed)
+	}
+	if listed.Facets["all"] != float64(2) {
+		t.Fatalf("facets=%#v", listed.Facets)
+	}
+
+	rec = httptest.NewRecorder()
+	handleAdminBuildAccountsList(rec, httptest.NewRequest(http.MethodGet, "/admin/api/build-accounts?expired=true", nil))
+	_ = json.Unmarshal(rec.Body.Bytes(), &listed)
+	if listed.Total != 1 || listed.Accounts[0]["name"] != "old" {
+		t.Fatalf("expired filter=%#v", listed)
+	}
+}
+
+func TestAdminBuildAccountsImportAsyncAndCleanup(t *testing.T) {
+	store := &fakeBuildAccountStore{}
+	restore := SetBuildAccountStore(store)
+	defer restore()
+	// 同步 runner 便于测试
+	prev := adminBuildAsyncRunner
+	adminBuildAsyncRunner = func(run func()) { run() }
+	defer func() { adminBuildAsyncRunner = prev }()
+
+	body := []byte(`{"accounts":[
+		{"provider":"grok_build","name":"a1","user_id":"ua","access_token":"at1","refresh_token":"rt1","expires_at":"2000-01-01T00:00:00Z"},
+		{"provider":"grok_build","name":"a2","user_id":"ub","access_token":"at2","refresh_token":"rt2","expires_at":"2099-01-01T00:00:00Z"}
+	]}`)
+	rec := httptest.NewRecorder()
+	handleAdminBuildAccountsImportAsync(rec, httptest.NewRequest(http.MethodPost, "/admin/api/build-accounts/import-async", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("import-async status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["task_id"] == "" || resp["total"] != float64(2) {
+		t.Fatalf("resp=%#v", resp)
+	}
+	if len(store.accounts) != 2 {
+		t.Fatalf("accounts=%d", len(store.accounts))
+	}
+
+	rec = httptest.NewRecorder()
+	handleAdminBuildAccountsCleanup(rec, httptest.NewRequest(http.MethodPost, "/admin/api/build-accounts/cleanup", bytes.NewReader([]byte(`{"mode":"expired"}`))))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cleanup status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	// 同步 runner 下 cleanup 已完成
+	if len(store.accounts) != 1 || store.accounts[0].Name != "a2" {
+		t.Fatalf("after cleanup=%#v", store.accounts)
+	}
+}

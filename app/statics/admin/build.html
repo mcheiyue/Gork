@@ -22,8 +22,8 @@
     .page-action-btn:hover { background:#f3f3f3; border-color:#dcdcdc }
     .page-action-btn-primary { background:#111; border-color:#111; color:#fff }
     .page-action-btn-primary:hover { background:#222; border-color:#222 }
-    .page-action-btn-danger { color:#b91c1c; border-color:#fecaca; background:#fff5f5 }
-    .grid-2 { display:grid; grid-template-columns:1.1fr .9fr; gap:16px }
+    .page-action-btn:disabled { opacity:.45; cursor:not-allowed }
+    .grid-2 { display:grid; grid-template-columns:1.25fr .75fr; gap:16px }
     @media (max-width: 980px) { .grid-2 { grid-template-columns:1fr } }
     .card {
       background:#fff; border-radius:14px; padding:16px 18px;
@@ -38,7 +38,17 @@
       padding:10px 12px; font:inherit; font-size:13px; color:#222; box-sizing:border-box;
     }
     .field textarea { min-height:140px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
-    .hint { font-size:12px; color:#8a8a8a; margin-top:6px; line-height:1.5 }
+    .filters { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; align-items:center }
+    .filters input, .filters select {
+      height:32px; border:1px solid #e6e6e6; border-radius:999px; background:#fafafa;
+      padding:0 12px; font-size:12px; color:#333;
+    }
+    .filters input { min-width:160px }
+    .facets { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; font-size:12px; color:#777 }
+    .facet-chip {
+      border:1px solid #ececec; background:#fafafa; border-radius:999px; padding:4px 10px; cursor:pointer;
+    }
+    .facet-chip.active { background:#111; color:#fff; border-color:#111 }
     .device-box {
       margin-top:12px; padding:12px 14px; border-radius:12px; background:#f7f7f5; border:1px dashed #e2e2e2;
       display:none;
@@ -67,63 +77,101 @@
     .empty { padding:28px 8px; text-align:center; color:#9a9a9a; font-size:13px }
     .mono { font-variant-numeric:tabular-nums; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace }
     .muted { color:#8a8a8a }
+    .progress {
+      display:none; margin-top:10px; padding:10px 12px; border-radius:10px; background:#f7f7f5; border:1px solid #ececec;
+      font-size:12px; color:#444; line-height:1.5;
+    }
+    .progress.show { display:block }
+    .progress .bar {
+      height:6px; background:#ececec; border-radius:999px; overflow:hidden; margin-top:8px;
+    }
+    .progress .bar > i { display:block; height:100%; width:0; background:#111; border-radius:999px; transition:width .2s }
   </style>
 </head>
 <body>
   <div id="admin-header" data-active="/admin/build"></div>
-  <main class="admin-main" style="max-width:1200px;margin:0 auto;padding:24px 20px 48px">
+  <main class="admin-main" style="max-width:1280px;margin:0 auto;padding:24px 20px 48px">
     <div class="page-hd">
       <div>
-        <div class="page-title" data-i18n="build.pageTitleShort">Build 账号</div>
-        <div class="page-sub" data-i18n="build.pageSub">
-          管理独立 Build 池（Device OAuth / JSON 导入）。默认不影响现网 web/console；开启 features.build_provider 后模型 ID 为 build/&lt;upstream&gt;。
+        <div class="page-title">Build 账号</div>
+        <div class="page-sub">
+          独立 Build 池：Device OAuth / 分片导入 / 配额同步 / 过期清理。Token 不回显；开启 features.build_provider 后模型为 build/&lt;upstream&gt;。
         </div>
       </div>
       <div class="page-actions">
-        <button type="button" class="page-action-btn" id="btn-refresh" data-i18n="build.refresh">刷新</button>
+        <button type="button" class="page-action-btn" id="btn-refresh">刷新</button>
+        <button type="button" class="page-action-btn" id="btn-batch-billing">批量同步配额</button>
+        <button type="button" class="page-action-btn" id="btn-batch-refresh">批量刷新 Token</button>
+        <button type="button" class="page-action-btn" id="btn-cleanup-expired">清理过期</button>
       </div>
     </div>
 
     <div class="grid-2">
       <section class="card">
-        <div class="card-title" data-i18n="build.listTitle">账号列表</div>
-        <div class="card-sub" data-i18n="build.listSub">Token 不会回显；仅显示是否已有 access/refresh。</div>
+        <div class="card-title">账号列表</div>
+        <div class="card-sub">支持状态 / 是否过期 / 是否已同步配额 / 关键词筛选。</div>
+        <div class="facets" id="facets"></div>
+        <div class="filters">
+          <select id="filter-status">
+            <option value="">全部状态</option>
+            <option value="active">active</option>
+            <option value="disabled">disabled</option>
+            <option value="cooling">cooling</option>
+            <option value="expired">expired</option>
+          </select>
+          <select id="filter-expired">
+            <option value="">过期不限</option>
+            <option value="true">已过期</option>
+            <option value="false">未过期</option>
+          </select>
+          <select id="filter-billing">
+            <option value="">配额不限</option>
+            <option value="true">已同步</option>
+            <option value="false">未同步</option>
+          </select>
+          <input id="filter-q" type="search" placeholder="搜索 name / email / user_id / id" autocomplete="off">
+          <button type="button" class="page-action-btn" id="btn-apply-filter">应用</button>
+        </div>
         <div id="list-wrap">
-          <div class="empty" data-i18n="build.loading">加载中…</div>
+          <div class="empty">加载中…</div>
+        </div>
+        <div class="progress" id="task-progress">
+          <div id="task-progress-text">任务进行中…</div>
+          <div class="bar"><i id="task-progress-bar"></i></div>
         </div>
       </section>
 
       <div style="display:flex;flex-direction:column;gap:16px">
         <section class="card">
-          <div class="card-title" data-i18n="build.deviceTitle">Device 登录</div>
-          <div class="card-sub" data-i18n="build.deviceSub">启动后在浏览器完成 xAI 授权，再轮询落库。</div>
+          <div class="card-title">Device 登录</div>
+          <div class="card-sub">启动后在浏览器完成 xAI 授权，再轮询落库。</div>
           <div class="field">
-            <label for="device-name" data-i18n="build.accountName">显示名（可选）</label>
+            <label for="device-name">显示名（可选）</label>
             <input id="device-name" type="text" placeholder="build-account" autocomplete="off">
           </div>
           <div class="page-actions">
-            <button type="button" class="page-action-btn page-action-btn-primary" id="btn-device-start" data-i18n="build.deviceStart">开始 Device 登录</button>
-            <button type="button" class="page-action-btn" id="btn-device-poll" disabled data-i18n="build.devicePoll">轮询一次</button>
+            <button type="button" class="page-action-btn page-action-btn-primary" id="btn-device-start">开始 Device 登录</button>
+            <button type="button" class="page-action-btn" id="btn-device-poll" disabled>轮询一次</button>
           </div>
           <div class="device-box" id="device-box">
-            <div class="device-meta" data-i18n="build.userCodeLabel">用户码</div>
+            <div class="device-meta">用户码</div>
             <div class="device-code mono" id="device-user-code">—</div>
             <div class="device-meta" id="device-uri-wrap"></div>
-            <div class="device-meta muted" id="device-status" data-i18n="build.deviceWaiting">等待授权…</div>
+            <div class="device-meta muted" id="device-status">等待授权…</div>
           </div>
         </section>
 
         <section class="card">
-          <div class="card-title" data-i18n="build.importTitle">JSON 导入</div>
-          <div class="card-sub" data-i18n="build.importSub">兼容 chenyme 批量 accounts 或单对象；provider 须为 grok_build。</div>
+          <div class="card-title">JSON 导入（异步分片）</div>
+          <div class="card-sub">兼容 chenyme 批量 accounts 或单对象；provider 须为 grok_build。大批量请用异步导入。</div>
           <div class="field">
             <label for="import-json">JSON</label>
             <textarea id="import-json" spellcheck="false" placeholder='{"accounts":[{"provider":"grok_build","name":"...","access_token":"...","refresh_token":"..."}]}'></textarea>
           </div>
           <div class="page-actions">
-            <button type="button" class="page-action-btn page-action-btn-primary" id="btn-import" data-i18n="build.importBtn">导入</button>
+            <button type="button" class="page-action-btn page-action-btn-primary" id="btn-import-async">异步导入</button>
+            <button type="button" class="page-action-btn" id="btn-import-sync">同步导入（小批量）</button>
           </div>
-          <div class="hint" data-i18n="build.importHint">导入后可在列表中禁用/删除。生产开启 Build 需单独设置 features.build_provider=true。</div>
         </section>
       </div>
     </div>
@@ -135,11 +183,22 @@
   <script src="/static/js/footer.js?v={{APP_VERSION}}"></script>
   <script src="/static/js/admin-header.js?v={{APP_VERSION}}"></script>
   <script>
-const tr = (key, vars, fallback) => (window.t ? t(key, vars) : (fallback || key));
 const esc = (v) => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+function waitI18n() {
+  return new Promise((resolve) => {
+    if (window.I18n && typeof I18n.onReady === 'function') {
+      I18n.onReady(resolve);
+      return;
+    }
+    resolve();
+  });
+}
 
 let deviceState = null;
 let pollTimer = null;
+let lastFacets = null;
+let activeTaskAbort = null;
 
 async function api(method, path, body) {
   const key = await adminKey.get();
@@ -147,7 +206,7 @@ async function api(method, path, body) {
   const opts = { method, headers };
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
+    opts.body = typeof body === 'string' ? body : JSON.stringify(body);
   }
   const res = await fetch(ADMIN_API + path, opts);
   const text = await res.text();
@@ -170,48 +229,88 @@ function statusBadge(status) {
 
 function fmtTime(v) {
   if (!v) return '—';
+  // RFC3339 string or unix
+  if (typeof v === 'string' && v.includes('T')) {
+    try { return new Date(v).toLocaleString(); } catch { return esc(v); }
+  }
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return esc(v);
-  // unix seconds or ms
   const ms = n > 1e12 ? n : n * 1000;
   try { return new Date(ms).toLocaleString(); } catch { return esc(v); }
 }
 
 function tokenFlags(row) {
-  const a = row.has_access_token ? 'AT' : '—';
-  const r = row.has_refresh_token ? 'RT' : '—';
-  return `${a}/${r}`;
+  return `${row.has_access_token ? 'AT' : '—'}/${row.has_refresh_token ? 'RT' : '—'}`;
 }
 
 function fmtBilling(row) {
   const b = row.billing || null;
   if (!b || (!b.plan_code && !b.plan_name && !(b.monthly_limit > 0) && !(b.used > 0))) {
-    const synced = row.billing_synced_at;
-    return synced
-      ? `<div class="muted" style="font-size:12px">${esc(tr('build.billingEmpty', null, '无配额数据'))}</div>
-         <div class="muted" style="font-size:11px">${esc(fmtTime(synced))}</div>`
-      : `<span class="muted" style="font-size:12px">${esc(tr('build.billingNone', null, '未同步'))}</span>`;
+    return row.billing_synced_at
+      ? `<div class="muted" style="font-size:12px">无配额数据</div><div class="muted" style="font-size:11px">${esc(fmtTime(row.billing_synced_at))}</div>`
+      : `<span class="muted" style="font-size:12px">未同步</span>`;
   }
   const plan = b.plan_name || b.plan_code || '—';
   const used = Number(b.used) || 0;
   const limit = Number(b.monthly_limit) || 0;
-  const usage = limit > 0
-    ? `${used.toFixed(2)} / ${limit.toFixed(2)}`
-    : (used > 0 ? String(used) : '—');
-  const od = (b.on_demand_used > 0 || b.on_demand_cap > 0)
-    ? `<div class="muted" style="font-size:11px">OD ${Number(b.on_demand_used || 0).toFixed(2)}/${Number(b.on_demand_cap || 0).toFixed(2)}</div>`
-    : '';
+  const usage = limit > 0 ? `${used.toFixed(2)} / ${limit.toFixed(2)}` : (used > 0 ? String(used) : '—');
   const synced = row.billing_synced_at || b.synced_at || '';
   return `<div style="font-size:12px;font-weight:600">${esc(plan)}</div>
     <div class="mono" style="font-size:12px">${esc(usage)}</div>
-    ${od}
     <div class="muted" style="font-size:11px">${esc(fmtTime(synced))}</div>`;
+}
+
+function currentFilterQuery() {
+  const params = new URLSearchParams();
+  const status = document.getElementById('filter-status').value;
+  const expired = document.getElementById('filter-expired').value;
+  const billing = document.getElementById('filter-billing').value;
+  const q = document.getElementById('filter-q').value.trim();
+  if (status) params.set('status', status);
+  if (expired) params.set('expired', expired);
+  if (billing) params.set('has_billing', billing);
+  if (q) params.set('q', q);
+  const s = params.toString();
+  return s ? `?${s}` : '';
+}
+
+function renderFacets(facets) {
+  lastFacets = facets || {};
+  const el = document.getElementById('facets');
+  const items = [
+    ['all', '全部', lastFacets.all],
+    ['active', 'active', lastFacets.active],
+    ['disabled', 'disabled', lastFacets.disabled],
+    ['cooling', 'cooling', lastFacets.cooling],
+    ['expired_token', 'token过期', lastFacets.expired_token],
+    ['with_billing', '已同步配额', lastFacets.with_billing],
+  ];
+  const cur = document.getElementById('filter-status').value;
+  el.innerHTML = items.map(([key, label, n]) => {
+    const active = (key === 'all' && !cur) || (key === cur);
+    return `<span class="facet-chip ${active ? 'active' : ''}" data-facet="${esc(key)}">${esc(label)} ${Number(n)||0}</span>`;
+  }).join('');
+  el.querySelectorAll('[data-facet]').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const key = chip.dataset.facet;
+      if (key === 'all') document.getElementById('filter-status').value = '';
+      else if (key === 'expired_token') {
+        document.getElementById('filter-expired').value = 'true';
+        document.getElementById('filter-status').value = '';
+      } else if (key === 'with_billing') {
+        document.getElementById('filter-billing').value = 'true';
+      } else {
+        document.getElementById('filter-status').value = key;
+      }
+      loadList();
+    });
+  });
 }
 
 function renderList(rows) {
   const wrap = document.getElementById('list-wrap');
   if (!rows || !rows.length) {
-    wrap.innerHTML = `<div class="empty">${esc(tr('build.empty', null, '暂无 Build 账号'))}</div>`;
+    wrap.innerHTML = `<div class="empty">暂无匹配的 Build 账号</div>`;
     return;
   }
   const body = rows.map((row) => {
@@ -228,10 +327,10 @@ function renderList(rows) {
       <td class="muted" style="font-size:12px">${fmtTime(row.expires_at)}</td>
       <td>
         <div class="row-actions">
-          <button type="button" data-act="billing" data-id="${esc(id)}">${esc(tr('build.syncBilling', null, '同步配额'))}</button>
-          <button type="button" data-act="active" data-id="${esc(id)}">${esc(tr('build.enable', null, '启用'))}</button>
-          <button type="button" data-act="disabled" data-id="${esc(id)}">${esc(tr('build.disable', null, '禁用'))}</button>
-          <button type="button" data-act="delete" data-id="${esc(id)}">${esc(tr('build.delete', null, '删除'))}</button>
+          <button type="button" data-act="billing" data-id="${esc(id)}">同步配额</button>
+          <button type="button" data-act="active" data-id="${esc(id)}">启用</button>
+          <button type="button" data-act="disabled" data-id="${esc(id)}">禁用</button>
+          <button type="button" data-act="delete" data-id="${esc(id)}">删除</button>
         </div>
       </td>
     </tr>`;
@@ -239,13 +338,7 @@ function renderList(rows) {
   wrap.innerHTML = `<table class="build-table">
     <thead>
       <tr>
-        <th>ID</th>
-        <th data-i18n="build.colName">名称</th>
-        <th data-i18n="build.colStatus">状态</th>
-        <th>AT/RT</th>
-        <th data-i18n="build.colBilling">配额</th>
-        <th data-i18n="build.colExpires">过期</th>
-        <th data-i18n="build.colActions">操作</th>
+        <th>ID</th><th>名称</th><th>状态</th><th>AT/RT</th><th>配额</th><th>过期</th><th>操作</th>
       </tr>
     </thead>
     <tbody>${body}</tbody>
@@ -257,11 +350,11 @@ function renderList(rows) {
 
 async function loadList() {
   const wrap = document.getElementById('list-wrap');
-  wrap.innerHTML = `<div class="empty">${esc(tr('build.loading', null, '加载中…'))}</div>`;
+  wrap.innerHTML = `<div class="empty">加载中…</div>`;
   try {
-    const data = await api('GET', '/build-accounts');
-    const rows = data?.accounts || data?.items || data?.data || (Array.isArray(data) ? data : []);
-    renderList(rows);
+    const data = await api('GET', '/build-accounts' + currentFilterQuery());
+    renderFacets(data?.facets || {});
+    renderList(data?.accounts || []);
   } catch (err) {
     wrap.innerHTML = `<div class="empty">${esc(err.message || err)}</div>`;
     toastErr(err.message || String(err));
@@ -272,18 +365,109 @@ async function onRowAction(act, id) {
   if (!id) return;
   try {
     if (act === 'delete') {
-      if (!confirm(tr('build.confirmDelete', null, '确认删除该 Build 账号？'))) return;
+      if (!confirm('确认删除该 Build 账号？')) return;
       await api('DELETE', `/build-accounts?id=${encodeURIComponent(id)}`);
-      toastOk(tr('build.deleted', null, '已删除'));
+      toastOk('已删除');
     } else if (act === 'billing') {
       await api('POST', '/build-accounts/billing', { id });
-      toastOk(tr('build.billingSynced', null, '配额已同步'));
+      toastOk('配额已同步');
     } else {
       await api('POST', '/build-accounts/status', { id, status: act, reason: 'admin' });
-      toastOk(tr('build.statusUpdated', null, '状态已更新'));
+      toastOk('状态已更新');
     }
     await loadList();
   } catch (err) {
+    toastErr(err.message || String(err));
+  }
+}
+
+function showProgress(show, text, processed, total) {
+  const box = document.getElementById('task-progress');
+  const bar = document.getElementById('task-progress-bar');
+  const label = document.getElementById('task-progress-text');
+  if (!show) {
+    box.classList.remove('show');
+    return;
+  }
+  box.classList.add('show');
+  label.textContent = text || '任务进行中…';
+  const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  bar.style.width = pct + '%';
+}
+
+async function streamTask(taskId) {
+  if (!taskId) return;
+  if (activeTaskAbort) activeTaskAbort.abort();
+  activeTaskAbort = new AbortController();
+  const key = await adminKey.get();
+  const res = await fetch(ADMIN_API + `/batch/${encodeURIComponent(taskId)}/stream`, {
+    headers: { Authorization: 'Bearer ' + key },
+    signal: activeTaskAbort.signal,
+  });
+  if (!res.ok || !res.body) {
+    throw new Error('任务流连接失败: ' + res.status);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const chunks = buf.split('\n\n');
+    buf = chunks.pop() || '';
+    for (const chunk of chunks) {
+      const lines = chunk.split('\n');
+      let dataLine = '';
+      for (const line of lines) {
+        if (line.startsWith('data:')) dataLine += line.slice(5).trim();
+      }
+      if (!dataLine || dataLine.startsWith(':')) continue;
+      let ev;
+      try { ev = JSON.parse(dataLine); } catch { continue; }
+      const total = Number(ev.total) || 0;
+      const processed = Number(ev.processed) || 0;
+      const ok = Number(ev.ok) || 0;
+      const fail = Number(ev.fail) || 0;
+      if (ev.type === 'progress' || ev.type === 'snapshot') {
+        showProgress(true, `进度 ${processed}/${total} · 成功 ${ok} · 失败 ${fail}`, processed, total);
+      }
+      if (ev.type === 'done') {
+        const summary = ev.result?.summary || ev.result || {};
+        showProgress(true, `完成 · 成功 ${summary.ok ?? ok} · 失败 ${summary.fail ?? fail}`, total || processed, total || processed);
+        toastOk('任务完成');
+        await loadList();
+        setTimeout(() => showProgress(false), 2500);
+        return;
+      }
+      if (ev.type === 'error') {
+        showProgress(true, '失败: ' + (ev.error || 'unknown'), processed, total);
+        toastErr(ev.error || '任务失败');
+        return;
+      }
+      if (ev.type === 'cancelled') {
+        showProgress(true, '已取消', processed, total);
+        toastErr('任务已取消');
+        return;
+      }
+    }
+  }
+}
+
+async function runAsyncJob(path, body, label) {
+  try {
+    showProgress(true, (label || '任务') + ' 启动中…', 0, 1);
+    const data = await api('POST', path, body || {});
+    if (!data.task_id) {
+      toastOk((label || '任务') + '：无匹配项');
+      showProgress(false);
+      await loadList();
+      return;
+    }
+    toastOk((label || '任务') + ' 已启动');
+    await streamTask(data.task_id);
+  } catch (err) {
+    showProgress(false);
     toastErr(err.message || String(err));
   }
 }
@@ -302,11 +486,11 @@ function showDeviceBox(payload) {
   const uri = payload.verification_uri_complete || payload.verification_uri || '';
   const wrap = document.getElementById('device-uri-wrap');
   if (uri) {
-    wrap.innerHTML = `${esc(tr('build.openUri', null, '打开'))}: <a href="${esc(uri)}" target="_blank" rel="noopener">${esc(uri)}</a>`;
+    wrap.innerHTML = `打开: <a href="${esc(uri)}" target="_blank" rel="noopener">${esc(uri)}</a>`;
   } else {
     wrap.textContent = '';
   }
-  document.getElementById('device-status').textContent = tr('build.deviceWaiting', null, '等待授权…');
+  document.getElementById('device-status').textContent = '等待授权…';
   document.getElementById('btn-device-poll').disabled = !payload.device_code;
 }
 
@@ -320,7 +504,7 @@ async function startDevice() {
       name: document.getElementById('device-name').value.trim(),
     };
     showDeviceBox(data);
-    toastOk(tr('build.deviceStarted', null, '已启动 Device 登录'));
+    toastOk('已启动 Device 登录');
     pollTimer = setInterval(() => { pollDevice(true); }, deviceState.interval * 1000);
   } catch (err) {
     toastErr(err.message || String(err));
@@ -329,7 +513,7 @@ async function startDevice() {
 
 async function pollDevice(silent) {
   if (!deviceState?.device_code) {
-    if (!silent) toastErr(tr('build.noDevice', null, '请先开始 Device 登录'));
+    if (!silent) toastErr('请先开始 Device 登录');
     return;
   }
   try {
@@ -339,11 +523,11 @@ async function pollDevice(silent) {
     const st = String(data.status || '').toLowerCase();
     const el = document.getElementById('device-status');
     if (st === 'pending') {
-      el.textContent = tr('build.devicePending', null, '授权中，请在浏览器完成…');
+      el.textContent = '授权中，请在浏览器完成…';
       return;
     }
     if (st === 'slow_down') {
-      el.textContent = tr('build.deviceSlowDown', null, '请放慢轮询…');
+      el.textContent = '请放慢轮询…';
       if (pollTimer && deviceState.interval) {
         clearPollTimer();
         deviceState.interval += 2;
@@ -353,58 +537,94 @@ async function pollDevice(silent) {
     }
     if (st === 'success') {
       clearPollTimer();
-      el.textContent = tr('build.deviceSuccess', null, '授权成功，已写入账号池');
+      el.textContent = '授权成功，已写入账号池';
       deviceState = null;
       document.getElementById('btn-device-poll').disabled = true;
-      toastOk(tr('build.deviceSuccess', null, '授权成功，已写入账号池'));
+      toastOk('授权成功，已写入账号池');
       await loadList();
       return;
     }
-    el.textContent = esc(data.status || JSON.stringify(data));
+    el.textContent = data.status || JSON.stringify(data);
   } catch (err) {
     if (!silent) toastErr(err.message || String(err));
     document.getElementById('device-status').textContent = err.message || String(err);
   }
 }
 
-async function importJSON() {
+async function importJSON(asyncMode) {
   const raw = document.getElementById('import-json').value.trim();
   if (!raw) {
-    toastErr(tr('build.importEmpty', null, '请粘贴 JSON'));
+    toastErr('请粘贴 JSON');
     return;
   }
   let parsed;
   try { parsed = JSON.parse(raw); }
-  catch (err) { toastErr(tr('build.importInvalid', null, 'JSON 无效') + ': ' + err.message); return; }
+  catch (err) { toastErr('JSON 无效: ' + err.message); return; }
   try {
+    if (asyncMode) {
+      showProgress(true, '导入任务启动中…', 0, 1);
+      const data = await api('POST', '/build-accounts/import-async', parsed);
+      if (!data.task_id) {
+        toastOk('导入完成（空）');
+        showProgress(false);
+        return;
+      }
+      toastOk(`异步导入已启动（${data.total || '?'}）`);
+      document.getElementById('import-json').value = '';
+      await streamTask(data.task_id);
+      return;
+    }
     const data = await api('POST', '/build-accounts/import', parsed);
     const n = data?.imported ?? data?.count ?? data?.accounts?.length ?? '';
-    toastOk(tr('build.importOk', null, '导入完成') + (n !== '' ? ` (${n})` : ''));
+    toastOk('导入完成' + (n !== '' ? ` (${n})` : ''));
     document.getElementById('import-json').value = '';
     await loadList();
   } catch (err) {
+    showProgress(false);
     toastErr(err.message || String(err));
   }
 }
 
 function bind() {
   document.getElementById('btn-refresh').addEventListener('click', loadList);
+  document.getElementById('btn-apply-filter').addEventListener('click', loadList);
+  document.getElementById('filter-q').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loadList();
+  });
   document.getElementById('btn-device-start').addEventListener('click', startDevice);
   document.getElementById('btn-device-poll').addEventListener('click', () => pollDevice(false));
-  document.getElementById('btn-import').addEventListener('click', importJSON);
+  document.getElementById('btn-import-async').addEventListener('click', () => importJSON(true));
+  document.getElementById('btn-import-sync').addEventListener('click', () => importJSON(false));
+  document.getElementById('btn-batch-billing').addEventListener('click', () => {
+    if (!confirm('对当前默认范围（全部 active）批量同步配额？可能较慢。')) return;
+    runAsyncJob('/build-accounts/billing/batch', { all: true }, '批量同步配额');
+  });
+  document.getElementById('btn-batch-refresh').addEventListener('click', () => {
+    if (!confirm('对全部 active 账号批量 OAuth refresh？')) return;
+    runAsyncJob('/build-accounts/refresh/batch', { all: true }, '批量刷新 Token');
+  });
+  document.getElementById('btn-cleanup-expired').addEventListener('click', () => {
+    if (!confirm('软删除全部 token 已过期的 Build 账号？')) return;
+    runAsyncJob('/build-accounts/cleanup', { mode: 'expired' }, '清理过期');
+  });
 }
 
 (async () => {
-  await waitI18n?.();
-  await renderAdminHeader?.();
-  await renderSiteFooter?.();
-  const key = await adminKey.get();
-  if (!key || !await verifyKey(ADMIN_API + '/verify', key).catch(() => false)) {
-    location.href = '/admin/login';
-    return;
+  try {
+    await waitI18n();
+    if (typeof renderAdminHeader === 'function') await renderAdminHeader();
+    if (typeof renderSiteFooter === 'function') await renderSiteFooter();
+    const key = await adminKey.get();
+    if (!key || !await verifyKey(ADMIN_API + '/verify', key).catch(() => false)) {
+      location.href = '/admin/login';
+      return;
+    }
+    bind();
+    loadList();
+  } catch (err) {
+    console.error(err);
+    toastErr(err.message || String(err));
   }
-  bind();
-  loadList();
 })();
   </script>
 </body>
