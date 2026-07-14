@@ -60,6 +60,7 @@ type ChatCompletionRequest struct {
 	ToolChoice        any              `json:"tool_choice,omitempty"`
 	ParallelToolCalls *bool            `json:"parallel_tool_calls,omitempty"`
 	MaxTokens         *int             `json:"max_tokens,omitempty"`
+	ResponseFormat    any              `json:"response_format,omitempty"`
 }
 
 func (r *ChatCompletionRequest) UnmarshalJSON(raw []byte) error {

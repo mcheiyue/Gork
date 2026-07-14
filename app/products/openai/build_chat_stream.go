@@ -52,6 +52,7 @@ func runBuildCompletion(
 		Tools:          options.Tools,
 		ToolChoice:     options.ToolChoice,
 		PromptCacheKey: cacheKey,
+		ResponseFormat: options.ResponseFormat,
 	})
 	if err != nil {
 		return chatCompletionResult{}, platform.NewUpstreamError(err.Error(), 400, "")

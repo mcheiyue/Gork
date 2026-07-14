@@ -215,14 +215,15 @@ func dispatchChatText(r *http.Request, req ChatCompletionRequest, messages []map
 		emitThink = &value
 	}
 	return routerCompletions(r.Context(), chatCompletionOptions{
-		Model:       req.Model,
-		Messages:    messages,
-		Stream:      &isStream,
-		EmitThink:   emitThink,
-		Tools:       req.Tools,
-		ToolChoice:  req.ToolChoice,
-		Temperature: routerFloatDefault(req.Temperature, 0.8),
-		TopP:        routerFloatDefault(req.TopP, 0.95),
+		Model:          req.Model,
+		Messages:       messages,
+		Stream:         &isStream,
+		EmitThink:      emitThink,
+		Tools:          req.Tools,
+		ToolChoice:     req.ToolChoice,
+		ResponseFormat: req.ResponseFormat,
+		Temperature:    routerFloatDefault(req.Temperature, 0.8),
+		TopP:           routerFloatDefault(req.TopP, 0.95),
 	})
 }
 

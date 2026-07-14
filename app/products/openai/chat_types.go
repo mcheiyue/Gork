@@ -95,6 +95,7 @@ type chatCompletionOptions struct {
 	EmitThink        *bool
 	Tools            []map[string]any
 	ToolChoice       any
+	ResponseFormat   any
 	Temperature      float64
 	TopP             float64
 	RequestOverrides map[string]any

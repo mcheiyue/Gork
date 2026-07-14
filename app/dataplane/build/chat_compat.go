@@ -21,6 +21,7 @@ type ResponsesBodyOptions struct {
 	Tools          []map[string]any
 	ToolChoice     any
 	PromptCacheKey string // 已解析的上游 prompt_cache_key；空则不注入
+	ResponseFormat any    // OpenAI chat response_format；归一为 text.format
 }
 
 // BuildResponsesBody 将 chat messages 转为 Build POST /responses 请求体。
@@ -82,6 +83,11 @@ func BuildResponsesBodyOpts(opts ResponsesBodyOptions) ([]byte, error) {
 	}
 	if key := strings.TrimSpace(opts.PromptCacheKey); key != "" {
 		payload["prompt_cache_key"] = key
+	}
+	if format, err := NormalizeChatResponseFormat(opts.ResponseFormat); err != nil {
+		return nil, err
+	} else if format != nil {
+		payload["text"] = map[string]any{"format": format}
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
