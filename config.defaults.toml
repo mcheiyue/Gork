@@ -76,10 +76,27 @@ imagine_public_image_proxy = false
 
 # 视频返回格式
 #   grok_url  — 直接返回 Grok CDN URL
-#   local_url — 下载后存本地，返回本地代理 URL
+#   local_url  — 下载后存本地，返回本地代理 URL
 #   grok_html — HTML <video> 标签，src 为 Grok CDN URL
 #   local_html — HTML <video> 标签，src 为本地代理 URL
 video_format = "grok_url"
+
+# xAI Build 通道（Device OAuth + cli-chat-proxy）；默认关闭，开启也不影响现网 web/console 路径
+build_provider = false
+
+
+# ==================== Build 上游（features.build_provider=true 时生效）====================
+[provider.build]
+base_url = "https://cli-chat-proxy.grok.com/v1"
+client_version = "0.2.99"
+client_identifier = "grok-shell"
+token_auth = "xai-grok-cli"
+user_agent = "grok-shell/0.2.99 (linux; x86_64)"
+oauth_client_id = "b1a00492-073a-47ea-816f-4c329264a828"
+oauth_scope = "openid profile email offline_access grok-cli:access api:access"
+oauth_device_url = "https://auth.x.ai/oauth2/device/code"
+oauth_token_url = "https://auth.x.ai/oauth2/token"
+timeout_seconds = 120
 
 
 # ==================== 本地缓存 ====================
