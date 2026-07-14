@@ -92,6 +92,12 @@ func NewRouter() http.Handler {
 	mux.HandleFunc("/admin/api/tokens/disabled", adminProtected(http.MethodPost, handleAdminTokensToggle))
 	mux.HandleFunc("/admin/api/tokens/disabled/batch", adminProtected(http.MethodPost, handleAdminTokensToggleBatch))
 	mux.HandleFunc("/admin/api/tokens/pool", adminProtected(http.MethodPut, handleAdminTokensPool))
+	// Build 独立账号池（features.build_provider；token 不回显）
+	mux.HandleFunc("/admin/api/build-accounts", adminProtectedAny(map[string]http.HandlerFunc{
+		http.MethodGet: handleAdminBuildAccountsList, http.MethodDelete: handleAdminBuildAccountsDelete,
+	}))
+	mux.HandleFunc("/admin/api/build-accounts/import", adminProtected(http.MethodPost, handleAdminBuildAccountsImport))
+	mux.HandleFunc("/admin/api/build-accounts/status", adminProtected(http.MethodPost, handleAdminBuildAccountsStatus))
 	return mux
 }
 

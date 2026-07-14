@@ -9,6 +9,7 @@ import (
 	platformconfig "github.com/dslzl/gork/app/platform/config"
 	"github.com/dslzl/gork/app/platform/security"
 	openaiproduct "github.com/dslzl/gork/app/products/openai"
+	adminproduct "github.com/dslzl/gork/app/products/web/admin"
 )
 
 // buildAccountsDBFile 与 data 目录并列的独立 SQLite（不进 SSO accounts）。
@@ -29,7 +30,9 @@ func defaultAppMainInitializeBuildAccountStore(ctx context.Context, state *appMa
 	}
 	state.buildAccountStore = store
 	openaiproduct.SetBuildAccountDirectory(store)
+	restoreAdmin := adminproduct.SetBuildAccountStore(store)
 	return func(context.Context) error {
+		restoreAdmin()
 		openaiproduct.SetBuildAccountDirectory(nil)
 		state.buildAccountStore = nil
 		return store.Close()

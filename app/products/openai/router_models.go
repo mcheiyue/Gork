@@ -28,6 +28,10 @@ func handleListModels(w http.ResponseWriter, r *http.Request) {
 		}
 		data = append(data, routerModelBody(spec, created))
 	}
+	// Build 动态模型：仅 features.build_provider=true 且有 active 账号时追加
+	for _, spec := range listBuildModelSpecs(r.Context()) {
+		data = append(data, routerModelBody(spec, created))
+	}
 	writeRouterJSON(w, http.StatusOK, map[string]any{
 		"object": "list",
 		"data":   data,
@@ -36,6 +40,30 @@ func handleListModels(w http.ResponseWriter, r *http.Request) {
 
 func handleGetModel(w http.ResponseWriter, r *http.Request) {
 	modelID := strings.TrimPrefix(r.URL.Path, "/v1/models/")
+	// Build 前缀走 Resolve（静态 registry 无 build/*）
+	if model.IsBuildModelName(modelID) {
+		if !buildFeatureEnabled() {
+			writeRouterJSON(w, http.StatusNotFound, map[string]any{
+				"error": map[string]any{
+					"message": "Model '" + modelID + "' not found",
+					"type":    "invalid_request_error",
+				},
+			})
+			return
+		}
+		spec, err := model.Resolve(modelID)
+		if err != nil {
+			writeRouterJSON(w, http.StatusNotFound, map[string]any{
+				"error": map[string]any{
+					"message": "Model '" + modelID + "' not found",
+					"type":    "invalid_request_error",
+				},
+			})
+			return
+		}
+		writeRouterJSON(w, http.StatusOK, routerModelBody(spec, time.Now().Unix()))
+		return
+	}
 	spec, ok := model.Get(modelID)
 	if !ok || !modelAvailableForPools(spec, routerAvailablePools(r)) {
 		writeRouterJSON(w, http.StatusNotFound, map[string]any{
