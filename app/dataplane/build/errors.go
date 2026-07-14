@@ -50,3 +50,13 @@ func IsPermanentRefresh(err error) bool {
 	}
 	return errors.Is(err, ErrAuthorizationDenied)
 }
+
+// IsAuthorizationPending 用户尚未在浏览器完成 Device 授权。
+func IsAuthorizationPending(err error) bool {
+	return errors.Is(err, ErrAuthorizationPending)
+}
+
+// IsSlowDown 轮询过快，应加大 interval。
+func IsSlowDown(err error) bool {
+	return errors.Is(err, ErrSlowDown)
+}

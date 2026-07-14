@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -73,7 +72,7 @@ func defaultBuildOAuthClient() buildTokenRefresher {
 }
 
 // BuildCompletions 走 Build 上游 POST /responses，再转 OpenAI chat.completion。
-// 首批仅非流式；stream=true 返回 400 提示（避免半截 SSE）。
+// 支持非流式 JSON 与流式 SSE（上游 SSE → OpenAI chat.completion.chunk 帧）。
 func BuildCompletions(ctx context.Context, options chatCompletionOptions) (chatCompletionResult, error) {
 	if !buildFeatureEnabled() {
 		return chatCompletionResult{}, fmt.Errorf("Unknown model: '%s'", options.Model)
@@ -82,15 +81,9 @@ func BuildCompletions(ctx context.Context, options chatCompletionOptions) (chatC
 	if upstream == "" {
 		return chatCompletionResult{}, fmt.Errorf("Unknown model: '%s'", options.Model)
 	}
-	isStream := false
+	stream := false
 	if options.Stream != nil {
-		isStream = *options.Stream
-	}
-	if isStream {
-		return chatCompletionResult{}, platform.NewUpstreamError(
-			"Build chat streaming is not enabled in this release; set stream=false",
-			400, "",
-		)
+		stream = *options.Stream
 	}
 
 	dir := buildAccountDir()
@@ -105,77 +98,7 @@ func BuildCompletions(ctx context.Context, options chatCompletionOptions) (chatC
 		return chatCompletionResult{}, platform.NewRateLimitError("No available Build accounts")
 	}
 
-	msgs := build.ExtractChatMessages(options.Messages)
-	body, err := build.BuildResponsesBody(upstream, msgs, false)
-	if err != nil {
-		return chatCompletionResult{}, platform.NewUpstreamError(err.Error(), 400, "")
-	}
-
-	client := buildAPIClient()
-	oauth := buildOAuthClient()
-	var lastErr error
-	for _, acc := range accounts {
-		access, err := ensureBuildAccessToken(ctx, dir, oauth, acc)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		resp, err := client.CreateResponse(ctx, build.RequestMeta{
-			AccessToken: access,
-			UserID:      acc.UserID,
-			Model:       upstream,
-			Stream:      false,
-		}, bytes.NewReader(body))
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-		_ = resp.Body.Close()
-		if readErr != nil {
-			lastErr = readErr
-			continue
-		}
-		if resp.StatusCode == http.StatusUnauthorized {
-			// 尝试一次 refresh 后重试本账号
-			if acc.RefreshToken != "" {
-				if tok, rerr := oauth.Refresh(ctx, acc.RefreshToken); rerr == nil {
-					_ = dir.UpdateTokens(ctx, acc.ID, tok.AccessToken, firstNonEmptyStr(tok.RefreshToken, acc.RefreshToken), tok.ExpiresAt)
-					resp2, err2 := client.CreateResponse(ctx, build.RequestMeta{
-						AccessToken: tok.AccessToken,
-						UserID:      acc.UserID,
-						Model:       upstream,
-						Stream:      false,
-					}, bytes.NewReader(body))
-					if err2 == nil {
-						raw2, _ := io.ReadAll(io.LimitReader(resp2.Body, 8<<20))
-						_ = resp2.Body.Close()
-						if resp2.StatusCode >= 200 && resp2.StatusCode < 300 {
-							return finishBuildChat(options.Model, raw2)
-						}
-						lastErr = &build.UpstreamError{Status: resp2.StatusCode, Body: string(raw2), Op: "create_response"}
-						continue
-					}
-				} else if build.IsPermanentRefresh(rerr) {
-					_ = dir.SetStatus(ctx, acc.ID, buildaccount.StatusExpired, "refresh permanent failure")
-				}
-			}
-			lastErr = &build.UpstreamError{Status: resp.StatusCode, Body: string(raw), Op: "create_response"}
-			continue
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = &build.UpstreamError{Status: resp.StatusCode, Body: string(raw), Op: "create_response"}
-			if build.IsRateLimited(&build.UpstreamError{Status: resp.StatusCode}) {
-				_ = dir.SetStatus(ctx, acc.ID, buildaccount.StatusCooling, fmt.Sprintf("upstream %d", resp.StatusCode))
-			}
-			continue
-		}
-		return finishBuildChat(options.Model, raw)
-	}
-	if lastErr != nil {
-		return chatCompletionResult{}, lastErr
-	}
-	return chatCompletionResult{}, platform.NewRateLimitError("No available Build accounts")
+	return runBuildCompletion(ctx, options, upstream, stream, accounts, dir, buildAPIClient(), buildOAuthClient())
 }
 
 func finishBuildChat(modelName string, raw []byte) (chatCompletionResult, error) {

@@ -112,3 +112,44 @@ func TestBuildCompletionsNoAccounts(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestBuildCompletionsStreamFrames(t *testing.T) {
+	prevF := buildFeatureEnabled
+	prevD := buildAccountDir
+	prevC := buildAPIClient
+	prevO := buildOAuthClient
+	buildFeatureEnabled = func() bool { return true }
+	buildAccountDir = func() buildAccountDirectory {
+		return &stubBuildDir{accounts: []buildaccount.Account{{
+			ID: 1, AccessToken: "at", UserID: "u1", Status: buildaccount.StatusActive,
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		}}}
+	}
+	sseBody := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n"
+	buildAPIClient = func() buildHTTPClient {
+		return &stubBuildHTTP{status: 200, body: sseBody}
+	}
+	buildOAuthClient = func() buildTokenRefresher { return stubOAuth{} }
+	defer func() {
+		buildFeatureEnabled = prevF
+		buildAccountDir = prevD
+		buildAPIClient = prevC
+		buildOAuthClient = prevO
+	}()
+	stream := true
+	got, err := Completions(context.Background(), chatCompletionOptions{
+		Model:    "build/grok-4",
+		Messages: []map[string]any{{"role": "user", "content": "hi"}},
+		Stream:   &stream,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.IsStream || len(got.StreamFrames) < 2 {
+		t.Fatalf("%#v", got)
+	}
+	joined := strings.Join(got.StreamFrames, "")
+	if !strings.Contains(joined, "chat.completion.chunk") || !strings.Contains(joined, "[DONE]") {
+		t.Fatalf("%s", joined)
+	}
+}
