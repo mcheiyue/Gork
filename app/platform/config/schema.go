@@ -309,6 +309,7 @@ var runtimeConfigDescriptions = map[string]string{
 	"retry.retry_status_codes":                  "Legacy retry HTTP status code key used by runtime compatibility paths.",
 	"security.cors.api_allowed_origins":         "Additional allowed origins for API CORS requests.",
 	"security.cors.web_allowed_origins":         "Additional allowed origins for WebUI/Admin CORS and WebSocket requests.",
+	"security.credential_encryption_key":       "Base64 32-byte key for at-rest credential encryption; empty disables (default).",
 	"security.headers.hsts_enabled":             "Enables Strict-Transport-Security response headers.",
 	"security.media.signed_url_ttl_seconds":     "Signed local media URL lifetime in seconds.",
 	"security.websocket.max_connections":        "Maximum concurrent WebUI WebSocket connections.",

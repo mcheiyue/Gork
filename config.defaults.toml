@@ -15,6 +15,12 @@ webui_key = ""
 
 
 # ==================== 安全 / 媒体签名 ====================
+[security]
+# 凭据加密密钥：Base64 编码的 32 字节。空=关闭加密（现网默认，零变化）。
+# 启用后用于 gorkenc:v1: 前缀密文；明文存量可读，写路径逐步加密（见 stage2/W2.2）。
+# 环境变量：GROK_SECURITY_CREDENTIAL_ENCRYPTION_KEY
+credential_encryption_key = ""
+
 [security.media]
 # 本地媒体签名 URL 有效期（秒）
 signed_url_ttl_seconds = 3600
@@ -98,6 +104,12 @@ resource_proxy_url = "http://privoxy:8118"
 resource_proxy_pool = []
 # 跳过代理 SSL 证书验证（代理使用自签名证书时启用）
 skip_ssl_verify = false
+# W2.4 scope 草案：逻辑 scope（build/web/console）默认映射到 app 出口；
+# 未单独配置时与现网 single_proxy/pool 行为一致。专用 scope 出口留待后续扩展。
+# scope_map.build = "app"
+# scope_map.web = "app"
+# scope_map.console = "app"
+# scope_map.asset = "asset"
 
 [proxy.clearance]
 # Cloudflare clearance 模式：none | manual | flaresolverr | byparr
