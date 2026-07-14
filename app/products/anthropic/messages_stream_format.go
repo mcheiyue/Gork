@@ -168,7 +168,7 @@ func (s *messagesStreamState) closeTextBlock() {
 
 func (s *messagesStreamState) finish(ctx context.Context, options MessagesOptions, plan messagesPlan, token string) {
 	if s.toolCallsEmitted {
-		s.finishToolStream()
+		s.finishToolStream(plan)
 		return
 	}
 	s.appendImagesAndReferences(ctx, token)
@@ -176,11 +176,15 @@ func (s *messagesStreamState) finish(ctx context.Context, options MessagesOption
 	if s.textStarted {
 		s.frames = append(s.frames, anthropicSSE("content_block_stop", map[string]any{"type": "content_block_stop", "index": s.blockIndex}))
 	}
+	// message_delta 补 input_tokens（对齐 chenyme #614；web 路径无 upstream usage 时用估算）
+	inputTokens := platform.EstimatePromptTokens(plan.Message, platform.PromptOverhead)
 	outputTokens := platform.EstimateTokens(strings.Join(s.textParts, "")) + platform.EstimateTokens(strings.Join(s.thinkParts, ""))
-	s.frames = append(s.frames, anthropicSSE("message_delta", map[string]any{"type": "message_delta", "delta": s.finalDelta(), "usage": map[string]any{"output_tokens": outputTokens}}))
+	s.frames = append(s.frames, anthropicSSE("message_delta", map[string]any{
+		"type": "message_delta", "delta": s.finalDelta(),
+		"usage": map[string]any{"input_tokens": inputTokens, "output_tokens": outputTokens},
+	}))
 	s.frames = append(s.frames, anthropicSSE("message_stop", map[string]any{"type": "message_stop"}), "data: [DONE]\n\n")
 	_ = options
-	_ = plan
 }
 
 func (s *messagesStreamState) appendImagesAndReferences(ctx context.Context, token string) {
@@ -205,12 +209,16 @@ func (s *messagesStreamState) finalDelta() map[string]any {
 	return delta
 }
 
-func (s *messagesStreamState) finishToolStream() {
+func (s *messagesStreamState) finishToolStream(plan messagesPlan) {
 	delta := map[string]any{"stop_reason": "tool_use", "stop_sequence": nil}
 	if sources := s.adapter.SearchSourcesList(); len(sources) > 0 {
 		delta["search_sources"] = sources
 	}
-	s.frames = append(s.frames, anthropicSSE("message_delta", map[string]any{"type": "message_delta", "delta": delta, "usage": map[string]any{"output_tokens": s.toolOutputTokens}}))
+	inputTokens := platform.EstimatePromptTokens(plan.Message, platform.PromptOverhead)
+	s.frames = append(s.frames, anthropicSSE("message_delta", map[string]any{
+		"type": "message_delta", "delta": delta,
+		"usage": map[string]any{"input_tokens": inputTokens, "output_tokens": s.toolOutputTokens},
+	}))
 	s.frames = append(s.frames, anthropicSSE("message_stop", map[string]any{"type": "message_stop"}), "data: [DONE]\n\n")
 }
 

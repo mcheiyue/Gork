@@ -84,6 +84,8 @@ func TestMessagesStreamBuildsAnthropicSSE(t *testing.T) {
 		`"text_delta"`,
 		`"text":"answer"`,
 		"event: message_delta",
+		`"input_tokens":`,
+		`"output_tokens":`,
 		"event: message_stop",
 		"data: [DONE]",
 	} {

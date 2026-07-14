@@ -69,7 +69,7 @@ func TestConsoleMessagesStreamBuildsAnthropicSSE(t *testing.T) {
 	consoleMessagesStream = func(context.Context, string, map[string]any, float64) ([]protocol.ConsoleStreamEvent, error) {
 		return []protocol.ConsoleStreamEvent{
 			{EventType: "response.output_text.delta", Data: `{"delta":"one"}`},
-			{EventType: "response.completed", Data: `{"response":{"usage":{"output_tokens":7}}}`},
+			{EventType: "response.completed", Data: `{"response":{"usage":{"input_tokens":194,"output_tokens":7}}}`},
 		}, nil
 	}
 
@@ -95,6 +95,7 @@ func TestConsoleMessagesStreamBuildsAnthropicSSE(t *testing.T) {
 		`"text":"one"`,
 		"event: content_block_stop",
 		"event: message_delta",
+		`"input_tokens":194`,
 		`"output_tokens":7`,
 		"event: message_stop",
 		"data: [DONE]",

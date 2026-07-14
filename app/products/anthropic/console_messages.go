@@ -320,10 +320,11 @@ func consoleMessagesStreamResult(options ConsoleMessagesOptions, deltas []string
 	for _, delta := range deltas {
 		frames = append(frames, anthropicSSE("content_block_delta", map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": delta}}))
 	}
-	outputTokens := outputTokensFor(adapter, adapter.FullText())
+	// message_delta 与非流式一致：带上 input_tokens（对齐 chenyme #614）
+	usage := consoleMessagesUsage(adapter, options.Messages, adapter.FullText())
 	frames = append(frames,
 		anthropicSSE("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0}),
-		anthropicSSE("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil}, "usage": map[string]any{"output_tokens": outputTokens}}),
+		anthropicSSE("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil}, "usage": usage}),
 		anthropicSSE("message_stop", map[string]any{"type": "message_stop"}),
 		"data: [DONE]\n\n",
 	)
