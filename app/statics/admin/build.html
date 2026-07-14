@@ -183,6 +183,31 @@ function tokenFlags(row) {
   return `${a}/${r}`;
 }
 
+function fmtBilling(row) {
+  const b = row.billing || null;
+  if (!b || (!b.plan_code && !b.plan_name && !(b.monthly_limit > 0) && !(b.used > 0))) {
+    const synced = row.billing_synced_at;
+    return synced
+      ? `<div class="muted" style="font-size:12px">${esc(tr('build.billingEmpty', null, '无配额数据'))}</div>
+         <div class="muted" style="font-size:11px">${esc(fmtTime(synced))}</div>`
+      : `<span class="muted" style="font-size:12px">${esc(tr('build.billingNone', null, '未同步'))}</span>`;
+  }
+  const plan = b.plan_name || b.plan_code || '—';
+  const used = Number(b.used) || 0;
+  const limit = Number(b.monthly_limit) || 0;
+  const usage = limit > 0
+    ? `${used.toFixed(2)} / ${limit.toFixed(2)}`
+    : (used > 0 ? String(used) : '—');
+  const od = (b.on_demand_used > 0 || b.on_demand_cap > 0)
+    ? `<div class="muted" style="font-size:11px">OD ${Number(b.on_demand_used || 0).toFixed(2)}/${Number(b.on_demand_cap || 0).toFixed(2)}</div>`
+    : '';
+  const synced = row.billing_synced_at || b.synced_at || '';
+  return `<div style="font-size:12px;font-weight:600">${esc(plan)}</div>
+    <div class="mono" style="font-size:12px">${esc(usage)}</div>
+    ${od}
+    <div class="muted" style="font-size:11px">${esc(fmtTime(synced))}</div>`;
+}
+
 function renderList(rows) {
   const wrap = document.getElementById('list-wrap');
   if (!rows || !rows.length) {
@@ -199,9 +224,11 @@ function renderList(rows) {
       </td>
       <td>${statusBadge(row.status)}</td>
       <td class="mono">${esc(tokenFlags(row))}</td>
+      <td>${fmtBilling(row)}</td>
       <td class="muted" style="font-size:12px">${fmtTime(row.expires_at)}</td>
       <td>
         <div class="row-actions">
+          <button type="button" data-act="billing" data-id="${esc(id)}">${esc(tr('build.syncBilling', null, '同步配额'))}</button>
           <button type="button" data-act="active" data-id="${esc(id)}">${esc(tr('build.enable', null, '启用'))}</button>
           <button type="button" data-act="disabled" data-id="${esc(id)}">${esc(tr('build.disable', null, '禁用'))}</button>
           <button type="button" data-act="delete" data-id="${esc(id)}">${esc(tr('build.delete', null, '删除'))}</button>
@@ -216,6 +243,7 @@ function renderList(rows) {
         <th data-i18n="build.colName">名称</th>
         <th data-i18n="build.colStatus">状态</th>
         <th>AT/RT</th>
+        <th data-i18n="build.colBilling">配额</th>
         <th data-i18n="build.colExpires">过期</th>
         <th data-i18n="build.colActions">操作</th>
       </tr>
@@ -247,6 +275,9 @@ async function onRowAction(act, id) {
       if (!confirm(tr('build.confirmDelete', null, '确认删除该 Build 账号？'))) return;
       await api('DELETE', `/build-accounts?id=${encodeURIComponent(id)}`);
       toastOk(tr('build.deleted', null, '已删除'));
+    } else if (act === 'billing') {
+      await api('POST', '/build-accounts/billing', { id });
+      toastOk(tr('build.billingSynced', null, '配额已同步'));
     } else {
       await api('POST', '/build-accounts/status', { id, status: act, reason: 'admin' });
       toastOk(tr('build.statusUpdated', null, '状态已更新'));
