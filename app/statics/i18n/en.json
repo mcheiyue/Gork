@@ -20,6 +20,7 @@
     "account": "Account Management",
     "config": "Configuration Management",
     "cache": "Cache Management",
+    "build": "Build",
     "languageLabel": "Language",
     "logout": "Sign Out",
     "versionDialogTitle": "Version",

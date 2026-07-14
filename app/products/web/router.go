@@ -35,6 +35,7 @@ func NewRouter() http.Handler {
 	mux.HandleFunc("/admin", webMethod(http.MethodGet, redirectWeb("/admin/login")))
 	mux.HandleFunc("/admin/login", webMethod(http.MethodGet, serveWebPage("admin/login.html")))
 	mux.HandleFunc("/admin/account", webMethod(http.MethodGet, serveWebPage("admin/account.html")))
+	mux.HandleFunc("/admin/build", webMethod(http.MethodGet, serveWebPage("admin/build.html")))
 	mux.HandleFunc("/admin/config", webMethod(http.MethodGet, serveWebPage("admin/config.html")))
 	mux.HandleFunc("/admin/cache", webMethod(http.MethodGet, serveWebPage("admin/cache.html")))
 	mux.HandleFunc("/webui", webMethod(http.MethodGet, redirectWeb("/webui/login")))

@@ -55,6 +55,10 @@ func TestWebRouterServesPagesAndGuardsWebUILogin(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != "page:admin/account.html" {
 		t.Fatalf("admin account status/body=%d/%s", rec.Code, rec.Body.String())
 	}
+	rec = getWeb("/admin/build", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "page:admin/build.html" {
+		t.Fatalf("admin build status/body=%d/%s", rec.Code, rec.Body.String())
+	}
 	rec = getWeb("/admin/config", "")
 	if rec.Code != http.StatusOK || rec.Body.String() != "page:admin/config.html" {
 		t.Fatalf("admin config status/body=%d/%s", rec.Code, rec.Body.String())
@@ -136,6 +140,7 @@ func TestWebRouterRouteGoldenStatusHeadersAndShapes(t *testing.T) {
 		{name: "webui redirect", path: "/webui", status: http.StatusTemporaryRedirect, location: "/webui/login"},
 		{name: "admin login page", path: "/admin/login", status: http.StatusOK, contentType: "text/html", body: "page:admin/login.html"},
 		{name: "admin account page", path: "/admin/account", status: http.StatusOK, contentType: "text/html", body: "page:admin/account.html"},
+		{name: "admin build page", path: "/admin/build", status: http.StatusOK, contentType: "text/html", body: "page:admin/build.html"},
 		{name: "admin config page", path: "/admin/config", status: http.StatusOK, contentType: "text/html", body: "page:admin/config.html"},
 		{name: "admin cache page", path: "/admin/cache", status: http.StatusOK, contentType: "text/html", body: "page:admin/cache.html"},
 		{name: "webui login page", path: "/webui/login", status: http.StatusOK, contentType: "text/html", body: "page:webui/login.html"},
