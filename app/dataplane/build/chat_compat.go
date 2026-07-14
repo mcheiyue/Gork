@@ -13,16 +13,32 @@ type ChatMessage struct {
 	Content string
 }
 
-// BuildResponsesBody 将 chat messages 转为 Build POST /responses 请求体（非流）。
-// 仅做最小兼容：system→instructions，其余拼成 input 文本；不处理 tools。
+// ResponsesBodyOptions 构造 Build POST /responses 请求体。
+type ResponsesBodyOptions struct {
+	Model      string
+	Messages   []ChatMessage
+	Stream     bool
+	Tools      []map[string]any
+	ToolChoice any
+}
+
+// BuildResponsesBody 将 chat messages 转为 Build POST /responses 请求体。
+// system→instructions，其余拼成 input 文本；可选 tools/tool_choice。
 func BuildResponsesBody(model string, messages []ChatMessage, stream bool) ([]byte, error) {
-	model = strings.TrimSpace(model)
+	return BuildResponsesBodyOpts(ResponsesBodyOptions{
+		Model: model, Messages: messages, Stream: stream,
+	})
+}
+
+// BuildResponsesBodyOpts 带 tools 的请求体构造。
+func BuildResponsesBodyOpts(opts ResponsesBodyOptions) ([]byte, error) {
+	model := strings.TrimSpace(opts.Model)
 	if model == "" {
 		return nil, fmt.Errorf("build responses model 为空")
 	}
 	var systemParts []string
 	var turns []string
-	for _, msg := range messages {
+	for _, msg := range opts.Messages {
 		role := strings.ToLower(strings.TrimSpace(msg.Role))
 		text := strings.TrimSpace(msg.Content)
 		if text == "" {
@@ -33,8 +49,9 @@ func BuildResponsesBody(model string, messages []ChatMessage, stream bool) ([]by
 			systemParts = append(systemParts, text)
 		case "assistant":
 			turns = append(turns, "Assistant: "+text)
+		case "tool":
+			turns = append(turns, "Tool: "+text)
 		default:
-			// user / tool / 未知一律当用户轮次
 			turns = append(turns, "User: "+text)
 		}
 	}
@@ -45,10 +62,22 @@ func BuildResponsesBody(model string, messages []ChatMessage, stream bool) ([]by
 	payload := map[string]any{
 		"model":  model,
 		"input":  input,
-		"stream": stream,
+		"stream": opts.Stream,
 	}
 	if len(systemParts) > 0 {
 		payload["instructions"] = strings.Join(systemParts, "\n\n")
+	}
+	if len(opts.Tools) > 0 {
+		normalized, err := NormalizeChatTools(opts.Tools)
+		if err != nil {
+			return nil, err
+		}
+		if len(normalized) > 0 {
+			payload["tools"] = normalized
+		}
+	}
+	if opts.ToolChoice != nil {
+		payload["tool_choice"] = opts.ToolChoice
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -58,34 +87,53 @@ func BuildResponsesBody(model string, messages []ChatMessage, stream bool) ([]by
 }
 
 // ChatCompletionFromResponsesJSON 将 Build /responses JSON 转为 OpenAI chat.completion。
+// 若含 function_call，映射为 message.tool_calls 且 finish_reason=tool_calls。
 func ChatCompletionFromResponsesJSON(model, responseID string, raw []byte) (map[string]any, error) {
-	text, err := extractOutputText(raw)
-	if err != nil {
-		return nil, err
-	}
 	if responseID == "" {
 		responseID = "chatcmpl-build"
 	}
 	now := time.Now().Unix()
+	toolCalls := ExtractToolCallsFromResponses(raw)
+	text, textErr := extractOutputText(raw)
+	if len(toolCalls) > 0 {
+		msg := map[string]any{
+			"role":       "assistant",
+			"content":    nil,
+			"tool_calls": toolCalls,
+		}
+		if strings.TrimSpace(text) != "" {
+			msg["content"] = text
+		}
+		return map[string]any{
+			"id":      responseID,
+			"object":  "chat.completion",
+			"created": now,
+			"model":   model,
+			"choices": []map[string]any{{
+				"index": 0, "message": msg, "finish_reason": "tool_calls",
+			}},
+			"usage": map[string]any{
+				"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+			},
+		}, nil
+	}
+	if textErr != nil {
+		return nil, textErr
+	}
 	return map[string]any{
 		"id":      responseID,
 		"object":  "chat.completion",
 		"created": now,
 		"model":   model,
-		"choices": []map[string]any{
-			{
-				"index": 0,
-				"message": map[string]any{
-					"role":    "assistant",
-					"content": text,
-				},
-				"finish_reason": "stop",
+		"choices": []map[string]any{{
+			"index": 0,
+			"message": map[string]any{
+				"role": "assistant", "content": text,
 			},
-		},
+			"finish_reason": "stop",
+		}},
 		"usage": map[string]any{
-			"prompt_tokens":     0,
-			"completion_tokens": 0,
-			"total_tokens":      0,
+			"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
 		},
 	}, nil
 }

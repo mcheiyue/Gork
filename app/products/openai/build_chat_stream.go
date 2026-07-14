@@ -24,7 +24,13 @@ func runBuildCompletion(
 	oauth buildTokenRefresher,
 ) (chatCompletionResult, error) {
 	msgs := build.ExtractChatMessages(options.Messages)
-	body, err := build.BuildResponsesBody(upstream, msgs, stream)
+	body, err := build.BuildResponsesBodyOpts(build.ResponsesBodyOptions{
+		Model:      upstream,
+		Messages:   msgs,
+		Stream:     stream,
+		Tools:      options.Tools,
+		ToolChoice: options.ToolChoice,
+	})
 	if err != nil {
 		return chatCompletionResult{}, platform.NewUpstreamError(err.Error(), 400, "")
 	}

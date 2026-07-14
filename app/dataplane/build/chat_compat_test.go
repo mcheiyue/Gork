@@ -62,3 +62,53 @@ func TestBuildResponsesBodyRejectsEmpty(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestBuildResponsesBodyOptsWithTools(t *testing.T) {
+	body, err := BuildResponsesBodyOpts(ResponsesBodyOptions{
+		Model: "grok-4",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "weather?"},
+		},
+		Tools: []map[string]any{
+			{
+				"type": "function",
+				"function": map[string]any{
+					"name":       "get_weather",
+					"parameters":  map[string]any{"type": "object"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	tools, ok := payload["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools=%#v", payload["tools"])
+	}
+	tool := tools[0].(map[string]any)
+	if tool["name"] != "get_weather" {
+		t.Fatalf("%#v", tool)
+	}
+}
+
+func TestChatCompletionFromResponsesJSONToolCalls(t *testing.T) {
+	raw := []byte(`{"output":[{"type":"function_call","call_id":"c1","name":"get_weather","arguments":"{}"}]}`)
+	got, err := ChatCompletionFromResponsesJSON("build/grok-4", "id-1", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	choices := got["choices"].([]map[string]any)
+	if choices[0]["finish_reason"] != "tool_calls" {
+		t.Fatalf("%#v", choices[0])
+	}
+	msg := choices[0]["message"].(map[string]any)
+	calls := msg["tool_calls"].([]map[string]any)
+	if len(calls) != 1 {
+		t.Fatalf("%#v", calls)
+	}
+}
