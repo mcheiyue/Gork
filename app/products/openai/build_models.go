@@ -22,6 +22,7 @@ var defaultBuildModelsCache = &buildModelsCache{ttl: 10 * time.Minute}
 
 // listBuildModelSpecs 在开关开启且有 active 账号时返回 build/<id> 规格。
 // 上游失败时返回空切片（不污染静态列表）；单模型 Resolve 仍走 BuildSpecFromName。
+// 选号前 ensureBuildAccessToken（与 chat 一致），多号跳过 refresh 失败。
 func listBuildModelSpecs(ctx context.Context) []model.ModelSpec {
 	if !buildFeatureEnabled() {
 		return nil
@@ -30,14 +31,28 @@ func listBuildModelSpecs(ctx context.Context) []model.ModelSpec {
 	if dir == nil {
 		return nil
 	}
+	if ids := defaultBuildModelsCache.snapshotValid(); len(ids) > 0 {
+		return specsFromBuildIDs(ids)
+	}
 	accounts, err := dir.ListActive(ctx, time.Now().UTC())
 	if err != nil || len(accounts) == 0 {
 		return nil
 	}
-	ids := defaultBuildModelsCache.loadOrFetch(ctx, accounts[0].AccessToken)
-	if len(ids) == 0 {
-		return nil
+	oauth := buildOAuthClient()
+	for _, acc := range accounts {
+		access, err := ensureBuildAccessToken(ctx, dir, oauth, acc)
+		if err != nil || strings.TrimSpace(access) == "" {
+			continue
+		}
+		ids := defaultBuildModelsCache.loadOrFetch(ctx, access)
+		if len(ids) > 0 {
+			return specsFromBuildIDs(ids)
+		}
 	}
+	return nil
+}
+
+func specsFromBuildIDs(ids []string) []model.ModelSpec {
 	specs := make([]model.ModelSpec, 0, len(ids))
 	for _, id := range ids {
 		name := model.BuildModelPrefix + id
@@ -46,6 +61,15 @@ func listBuildModelSpecs(ctx context.Context) []model.ModelSpec {
 		}
 	}
 	return specs
+}
+
+func (c *buildModelsCache) snapshotValid() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if time.Now().Before(c.expiresAt) && len(c.ids) > 0 {
+		return append([]string{}, c.ids...)
+	}
+	return nil
 }
 
 func (c *buildModelsCache) loadOrFetch(ctx context.Context, accessToken string) []string {
@@ -82,9 +106,6 @@ func (c *buildModelsCache) loadOrFetch(ctx context.Context, accessToken string) 
 type buildModelLister interface {
 	ListModels(ctx context.Context, accessToken string) ([]string, error)
 }
-
-// buildAPIClient 默认实现已支持 ListModels；此处适配 defaultBuildAPIClient 返回值。
-// 测试可注入仅实现 CreateResponse 的 fake。
 
 // resetBuildModelsCacheForTest 仅测试用。
 func resetBuildModelsCacheForTest() {
