@@ -12,16 +12,17 @@ import (
 )
 
 // Billing 是 Build 上游 GET /billing 的宽松规范化结果。
+// 数字字段不得 omitempty：free 号合法全 0，省略后 Admin 误判「无配额数据」。
 type Billing struct {
 	PlanCode             string    `json:"plan_code,omitempty"`
 	PlanName             string    `json:"plan_name,omitempty"`
-	MonthlyLimit         float64   `json:"monthly_limit,omitempty"`
-	Used                 float64   `json:"used,omitempty"`
-	OnDemandCap          float64   `json:"on_demand_cap,omitempty"`
-	OnDemandUsed         float64   `json:"on_demand_used,omitempty"`
-	PrepaidBalance       float64   `json:"prepaid_balance,omitempty"`
-	CreditUsagePercent   float64   `json:"credit_usage_percent,omitempty"`
-	IsUnifiedBillingUser bool      `json:"is_unified_billing_user,omitempty"`
+	MonthlyLimit         float64   `json:"monthly_limit"`
+	Used                 float64   `json:"used"`
+	OnDemandCap          float64   `json:"on_demand_cap"`
+	OnDemandUsed         float64   `json:"on_demand_used"`
+	PrepaidBalance       float64   `json:"prepaid_balance"`
+	CreditUsagePercent   float64   `json:"credit_usage_percent"`
+	IsUnifiedBillingUser bool      `json:"is_unified_billing_user"`
 	TopUpMethod          string    `json:"top_up_method,omitempty"`
 	BillingPeriodStart   string    `json:"billing_period_start,omitempty"`
 	BillingPeriodEnd     string    `json:"billing_period_end,omitempty"`
@@ -85,23 +86,43 @@ func ParseBilling(data []byte) (Billing, error) {
 		}
 	}
 	result := Billing{
-		PlanCode:             planCode,
-		PlanName:             planName,
-		MonthlyLimit:         numberValue(firstValue(root, "monthlyLimit", "monthly_limit")),
-		Used:                 numberValue(firstValue(root, "used", "totalUsed", "includedUsed")),
-		OnDemandCap:          numberValue(firstValue(root, "onDemandCap", "on_demand_cap", "maxAmountPerMonth")),
-		OnDemandUsed:         numberValue(firstValue(root, "onDemandUsed", "on_demand_used")),
-		PrepaidBalance:       numberValue(firstValue(root, "prepaidBalance", "prepaid_balance")),
-		CreditUsagePercent:   numberValue(firstValue(root, "creditUsagePercent", "credit_usage_percent")),
+		PlanCode:           planCode,
+		PlanName:           planName,
+		MonthlyLimit:       numberValue(firstValue(root, "monthlyLimit", "monthly_limit")),
+		Used:               numberValue(firstValue(root, "used", "totalUsed", "includedUsed")),
+		OnDemandCap:        numberValue(firstValue(root, "onDemandCap", "on_demand_cap", "maxAmountPerMonth")),
+		OnDemandUsed:       numberValue(firstValue(root, "onDemandUsed", "on_demand_used")),
+		PrepaidBalance:     numberValue(firstValue(root, "prepaidBalance", "prepaid_balance")),
+		CreditUsagePercent: numberValue(firstValue(root, "creditUsagePercent", "credit_usage_percent")),
+		// 布尔/字符串可能在 config 内或与 config 同级（credits 响应）
 		IsUnifiedBillingUser: boolValue(firstValue(root, "isUnifiedBillingUser", "is_unified_billing_user")),
 		TopUpMethod:          stringValue(firstValue(root, "topUpMethod", "top_up_method")),
 		BillingPeriodStart:   stringValue(firstValue(root, "billingPeriodStart", "billing_period_start")),
 		BillingPeriodEnd:     stringValue(firstValue(root, "billingPeriodEnd", "billing_period_end")),
 	}
+	if !result.IsUnifiedBillingUser {
+		result.IsUnifiedBillingUser = boolValue(firstValue(original, "isUnifiedBillingUser", "is_unified_billing_user"))
+	}
+	if result.TopUpMethod == "" {
+		result.TopUpMethod = stringValue(firstValue(original, "topUpMethod", "top_up_method"))
+	}
+	if result.BillingPeriodStart == "" {
+		result.BillingPeriodStart = stringValue(firstValue(original, "billingPeriodStart", "billing_period_start"))
+	}
+	if result.BillingPeriodEnd == "" {
+		result.BillingPeriodEnd = stringValue(firstValue(original, "billingPeriodEnd", "billing_period_end"))
+	}
 	if currentPeriod, ok := root["currentPeriod"].(map[string]any); ok {
 		result.UsagePeriodType = stringValue(currentPeriod["type"])
 		result.UsagePeriodStart = stringValue(currentPeriod["start"])
 		result.UsagePeriodEnd = stringValue(currentPeriod["end"])
+	}
+	if result.UsagePeriodType == "" {
+		if currentPeriod, ok := original["currentPeriod"].(map[string]any); ok {
+			result.UsagePeriodType = stringValue(currentPeriod["type"])
+			result.UsagePeriodStart = stringValue(currentPeriod["start"])
+			result.UsagePeriodEnd = stringValue(currentPeriod["end"])
+		}
 	}
 	if result.CreditUsagePercent == 0 {
 		switch {

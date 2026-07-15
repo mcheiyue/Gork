@@ -55,6 +55,47 @@ func TestMergeBillingSnapshotsPrefersCreditsPeriod(t *testing.T) {
 	}
 }
 
+func TestParseBillingValZeroShapeKeepsZerosInJSON(t *testing.T) {
+	// 生产 free 号真实形态：config.*.val=0 + credits 周周期
+	raw := []byte(`{
+		"config": {
+			"monthlyLimit": {"val": 0},
+			"used": {"val": 0},
+			"onDemandCap": {"val": 0},
+			"billingPeriodStart": "2026-07-01T00:00:00Z",
+			"billingPeriodEnd": "2026-08-01T00:00:00Z"
+		},
+		"isUnifiedBillingUser": true,
+		"topUpMethod": "TOP_UP_METHOD_SAVED_PAYMENT_METHOD"
+	}`)
+	got, err := ParseBilling(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MonthlyLimit != 0 || got.Used != 0 || got.OnDemandCap != 0 {
+		t.Fatalf("zeros=%#v", got)
+	}
+	if !got.IsUnifiedBillingUser || got.TopUpMethod == "" {
+		t.Fatalf("flags=%#v", got)
+	}
+	if got.BillingPeriodStart == "" {
+		t.Fatalf("period missing: %#v", got)
+	}
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(encoded, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"monthly_limit", "used", "on_demand_cap", "on_demand_used", "prepaid_balance", "credit_usage_percent"} {
+		if _, ok := m[key]; !ok {
+			t.Fatalf("json omitted zero field %s: %s", key, encoded)
+		}
+	}
+}
+
 func TestAPIClientGetBillingMergesCredits(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

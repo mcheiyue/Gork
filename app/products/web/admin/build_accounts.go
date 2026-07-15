@@ -199,7 +199,7 @@ func serializeBuildAccount(acc buildaccount.Account) map[string]any {
 	if !acc.UpdatedAt.IsZero() {
 		item["updated_at"] = acc.UpdatedAt.UTC().Format(time.RFC3339)
 	}
-	if !acc.BillingSynced.IsZero() || acc.Billing.PlanCode != "" || acc.Billing.MonthlyLimit > 0 {
+	if hasBuildBillingSnapshot(acc) {
 		item["billing"] = acc.Billing
 		if !acc.BillingSynced.IsZero() {
 			item["billing_synced_at"] = acc.BillingSynced.UTC().Format(time.RFC3339)
@@ -208,4 +208,27 @@ func serializeBuildAccount(acc buildaccount.Account) map[string]any {
 		}
 	}
 	return item
+}
+
+// hasBuildBillingSnapshot 含 free 号零额度与仅账期字段的合法同步结果。
+func hasBuildBillingSnapshot(acc buildaccount.Account) bool {
+	if !acc.BillingSynced.IsZero() || !acc.Billing.SyncedAt.IsZero() {
+		return true
+	}
+	b := acc.Billing
+	return b.PlanCode != "" ||
+		b.PlanName != "" ||
+		b.IsUnifiedBillingUser ||
+		b.TopUpMethod != "" ||
+		b.BillingPeriodStart != "" ||
+		b.BillingPeriodEnd != "" ||
+		b.UsagePeriodType != "" ||
+		b.UsagePeriodStart != "" ||
+		b.UsagePeriodEnd != "" ||
+		b.MonthlyLimit > 0 ||
+		b.Used > 0 ||
+		b.OnDemandCap > 0 ||
+		b.OnDemandUsed > 0 ||
+		b.PrepaidBalance > 0 ||
+		b.CreditUsagePercent > 0
 }

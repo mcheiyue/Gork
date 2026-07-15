@@ -3,11 +3,9 @@ package admin
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/dslzl/gork/app/control/buildaccount"
 	"github.com/dslzl/gork/app/dataplane/build"
-	"github.com/dslzl/gork/app/platform"
 	platformconfig "github.com/dslzl/gork/app/platform/config"
 	runtimepkg "github.com/dslzl/gork/app/platform/runtime"
 )
@@ -76,22 +74,7 @@ func runBuildCleanupBatch(ctx context.Context, store buildAccountAdminStore, tas
 }
 
 func syncOneBuildBilling(ctx context.Context, store buildAccountAdminStore, acc buildaccount.Account) error {
-	access := strings.TrimSpace(acc.AccessToken)
-	if access == "" && acc.RefreshToken == "" {
-		return platform.NewValidationError("account has no tokens", "access_token", "")
-	}
-	if acc.NeedsRefresh(time.Now().UTC(), 2*time.Minute) && acc.RefreshToken != "" {
-		if err := refreshOneBuildAccount(ctx, store, acc); err == nil {
-			if latest, gerr := store.Get(ctx, acc.ID); gerr == nil {
-				access = latest.AccessToken
-				acc = latest
-			}
-		}
-	}
-	if access == "" {
-		return platform.NewValidationError("account has no access_token", "access_token", "")
-	}
-	billing, err := adminBuildBillingFetcher().GetBilling(ctx, access)
+	billing, err := fetchBuildBillingWithRefresh(ctx, store, acc)
 	if err != nil {
 		return err
 	}

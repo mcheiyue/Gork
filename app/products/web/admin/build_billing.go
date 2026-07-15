@@ -53,26 +53,7 @@ func handleAdminBuildAccountsBilling(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, err)
 		return
 	}
-	access := strings.TrimSpace(acc.AccessToken)
-	if access == "" {
-		writeAdminError(w, platform.NewValidationError("account has no access_token", "access_token", ""))
-		return
-	}
-	// 过期则尝试 refresh
-	if acc.NeedsRefresh(time.Now().UTC(), 2*time.Minute) && acc.RefreshToken != "" {
-		oauth := build.NewOAuthClient(nil, build.OAuthConfig{
-			ClientID:  platformconfig.GlobalConfig.GetStr("provider.build.oauth_client_id", build.DefaultOAuthClientID),
-			Scope:     platformconfig.GlobalConfig.GetStr("provider.build.oauth_scope", build.DefaultOAuthScope),
-			DeviceURL: platformconfig.GlobalConfig.GetStr("provider.build.oauth_device_url", build.DefaultDeviceURL),
-			TokenURL:  platformconfig.GlobalConfig.GetStr("provider.build.oauth_token_url", build.DefaultTokenURL),
-		})
-		if tok, rerr := oauth.Refresh(r.Context(), acc.RefreshToken); rerr == nil {
-			access = tok.AccessToken
-			_ = store.UpdateTokens(r.Context(), acc.ID, tok.AccessToken,
-				firstNonEmptyAdmin(tok.RefreshToken, acc.RefreshToken), tok.ExpiresAt)
-		}
-	}
-	billing, err := adminBuildBillingFetcher().GetBilling(r.Context(), access)
+	billing, err := fetchBuildBillingWithRefresh(r.Context(), store, acc)
 	if err != nil {
 		// 失败不阻断主路径语义：管理面返回错误，但不当作账号永久失效
 		writeAdminError(w, err)
@@ -82,10 +63,15 @@ func handleAdminBuildAccountsBilling(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, err)
 		return
 	}
-	acc.Billing = billing
-	acc.BillingSynced = billing.SyncedAt
-	if acc.BillingSynced.IsZero() {
-		acc.BillingSynced = time.Now().UTC()
+	// 回读最新 token/计费字段
+	if latest, gerr := store.Get(r.Context(), acc.ID); gerr == nil {
+		acc = latest
+	} else {
+		acc.Billing = billing
+		acc.BillingSynced = billing.SyncedAt
+		if acc.BillingSynced.IsZero() {
+			acc.BillingSynced = time.Now().UTC()
+		}
 	}
 	writeAdminJSON(w, http.StatusOK, map[string]any{
 		"status":  "success",
@@ -93,6 +79,53 @@ func handleAdminBuildAccountsBilling(w http.ResponseWriter, r *http.Request) {
 		"billing": billing,
 		"account": serializeBuildAccount(acc),
 	})
+}
+
+// fetchBuildBillingWithRefresh 过期先 refresh；GetBilling 401 再 refresh 重试一次。
+func fetchBuildBillingWithRefresh(ctx context.Context, store buildAccountAdminStore, acc buildaccount.Account) (build.Billing, error) {
+	access, acc, err := ensureBuildAccessToken(ctx, store, acc)
+	if err != nil {
+		return build.Billing{}, err
+	}
+	billing, err := adminBuildBillingFetcher().GetBilling(ctx, access)
+	if err == nil {
+		return billing, nil
+	}
+	if !build.IsUnauthorized(err) || strings.TrimSpace(acc.RefreshToken) == "" {
+		return build.Billing{}, err
+	}
+	if rerr := refreshOneBuildAccount(ctx, store, acc); rerr != nil {
+		return build.Billing{}, err
+	}
+	latest, gerr := store.Get(ctx, acc.ID)
+	if gerr != nil {
+		return build.Billing{}, err
+	}
+	access = strings.TrimSpace(latest.AccessToken)
+	if access == "" {
+		return build.Billing{}, err
+	}
+	return adminBuildBillingFetcher().GetBilling(ctx, access)
+}
+
+// ensureBuildAccessToken 需要时 refresh，返回可用 access。
+func ensureBuildAccessToken(ctx context.Context, store buildAccountAdminStore, acc buildaccount.Account) (string, buildaccount.Account, error) {
+	access := strings.TrimSpace(acc.AccessToken)
+	if access == "" && strings.TrimSpace(acc.RefreshToken) == "" {
+		return "", acc, platform.NewValidationError("account has no tokens", "access_token", "")
+	}
+	if acc.NeedsRefresh(time.Now().UTC(), 2*time.Minute) && strings.TrimSpace(acc.RefreshToken) != "" {
+		if err := refreshOneBuildAccount(ctx, store, acc); err == nil {
+			if latest, gerr := store.Get(ctx, acc.ID); gerr == nil {
+				acc = latest
+				access = strings.TrimSpace(latest.AccessToken)
+			}
+		}
+	}
+	if access == "" {
+		return "", acc, platform.NewValidationError("account has no access_token", "access_token", "")
+	}
+	return access, acc, nil
 }
 
 func firstNonEmptyAdmin(values ...string) string {
@@ -103,6 +136,3 @@ func firstNonEmptyAdmin(values ...string) string {
 	}
 	return ""
 }
-
-// silence unused import guard if buildaccount helpers evolve
-var _ = buildaccount.StatusActive

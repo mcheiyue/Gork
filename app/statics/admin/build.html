@@ -245,18 +245,30 @@ function tokenFlags(row) {
 
 function fmtBilling(row) {
   const b = row.billing || null;
-  if (!b || (!b.plan_code && !b.plan_name && !(b.monthly_limit > 0) && !(b.used > 0))) {
-    return row.billing_synced_at
-      ? `<div class="muted" style="font-size:12px">无配额数据</div><div class="muted" style="font-size:11px">${esc(fmtTime(row.billing_synced_at))}</div>`
-      : `<span class="muted" style="font-size:12px">未同步</span>`;
+  const synced = row.billing_synced_at || (b && b.synced_at) || '';
+  if (!b && !synced) {
+    return `<span class="muted" style="font-size:12px">未同步</span>`;
   }
-  const plan = b.plan_name || b.plan_code || '—';
-  const used = Number(b.used) || 0;
-  const limit = Number(b.monthly_limit) || 0;
-  const usage = limit > 0 ? `${used.toFixed(2)} / ${limit.toFixed(2)}` : (used > 0 ? String(used) : '—');
-  const synced = row.billing_synced_at || b.synced_at || '';
+  // free 号上游常返回合法全 0；已同步则展示 0/0，禁止误报「无配额数据」
+  const plan = (b && (b.plan_name || b.plan_code)) || (b && b.is_unified_billing_user ? '免费/统一计费' : '免费·零额度');
+  const used = b ? (Number(b.used) || 0) : 0;
+  const limit = b ? (Number(b.monthly_limit) || 0) : 0;
+  const odCap = b ? (Number(b.on_demand_cap) || 0) : 0;
+  const odUsed = b ? (Number(b.on_demand_used) || 0) : 0;
+  const prepaid = b ? (Number(b.prepaid_balance) || 0) : 0;
+  let usage = `${used.toFixed(2)} / ${limit.toFixed(2)}`;
+  if (odCap > 0 || odUsed > 0) {
+    usage += ` · OD ${odUsed.toFixed(2)}/${odCap.toFixed(2)}`;
+  }
+  if (prepaid > 0) {
+    usage += ` · 预付 ${prepaid.toFixed(2)}`;
+  }
+  const period = b && (b.usage_period_type || b.billing_period_start)
+    ? [b.usage_period_type, b.billing_period_start, b.billing_period_end].filter(Boolean).join(' ')
+    : '';
   return `<div style="font-size:12px;font-weight:600">${esc(plan)}</div>
     <div class="mono" style="font-size:12px">${esc(usage)}</div>
+    ${period ? `<div class="muted" style="font-size:11px">${esc(period)}</div>` : ''}
     <div class="muted" style="font-size:11px">${esc(fmtTime(synced))}</div>`;
 }
 
