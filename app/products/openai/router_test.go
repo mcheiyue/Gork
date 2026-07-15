@@ -261,6 +261,28 @@ func TestRouterValidationHelpersMatchPythonBounds(t *testing.T) {
 	}
 }
 
+func TestValidateChatAcceptsBuildModelWhenFeatureOn(t *testing.T) {
+	resetRouterDepsForTest(t)
+	prev := buildFeatureEnabled
+	t.Cleanup(func() { buildFeatureEnabled = prev })
+
+	buildFeatureEnabled = func() bool { return true }
+	if err := validateChat(ChatCompletionRequest{
+		Model:    "build/grok-4.5",
+		Messages: []MessageItem{{Role: "user", Content: "hi"}},
+	}); err != nil {
+		t.Fatalf("build model should pass validate: %v", err)
+	}
+
+	buildFeatureEnabled = func() bool { return false }
+	if err := validateChat(ChatCompletionRequest{
+		Model:    "build/grok-4.5",
+		Messages: []MessageItem{{Role: "user", Content: "hi"}},
+	}); err == nil {
+		t.Fatal("expected model_not_found when build_provider off")
+	}
+}
+
 func TestRouterChatCompletionsDispatchesOptions(t *testing.T) {
 	resetRouterDepsForTest(t)
 	var got chatCompletionOptions

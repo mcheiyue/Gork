@@ -32,13 +32,24 @@ var (
 )
 
 func validateChat(req ChatCompletionRequest) error {
-	spec, ok := model.Get(req.Model)
-	if !ok || !spec.Enabled {
-		return platform.NewValidationError(
-			fmt.Sprintf("Model %q does not exist or you do not have access to it.", req.Model),
-			"model",
-			"model_not_found",
-		)
+	// Build 动态模型不在静态 registry；与 /v1/models 列表对齐，前缀 build/ 且开关开则放行。
+	if model.IsBuildModelName(req.Model) {
+		if !buildFeatureEnabled() || model.UpstreamIDFromBuildModel(req.Model) == "" {
+			return platform.NewValidationError(
+				fmt.Sprintf("Model %q does not exist or you do not have access to it.", req.Model),
+				"model",
+				"model_not_found",
+			)
+		}
+	} else {
+		spec, ok := model.Get(req.Model)
+		if !ok || !spec.Enabled {
+			return platform.NewValidationError(
+				fmt.Sprintf("Model %q does not exist or you do not have access to it.", req.Model),
+				"model",
+				"model_not_found",
+			)
+		}
 	}
 	if len(req.Messages) == 0 {
 		return platform.NewValidationError("messages cannot be empty", "messages", "")
