@@ -6,6 +6,7 @@ import (
 
 	"github.com/dslzl/gork/app/control/buildaccount"
 	"github.com/dslzl/gork/app/dataplane/build"
+	"github.com/dslzl/gork/app/platform"
 	platformconfig "github.com/dslzl/gork/app/platform/config"
 	runtimepkg "github.com/dslzl/gork/app/platform/runtime"
 )
@@ -82,6 +83,9 @@ func syncOneBuildBilling(ctx context.Context, store buildAccountAdminStore, acc 
 }
 
 func refreshOneBuildAccount(ctx context.Context, store buildAccountAdminStore, acc buildaccount.Account) error {
+	if strings.TrimSpace(acc.RefreshToken) == "" {
+		return platform.NewValidationError("account has no refresh_token", "refresh_token", "token_missing")
+	}
 	oauth := build.NewOAuthClient(nil, build.OAuthConfig{
 		ClientID:  platformconfig.GlobalConfig.GetStr("provider.build.oauth_client_id", build.DefaultOAuthClientID),
 		Scope:     platformconfig.GlobalConfig.GetStr("provider.build.oauth_scope", build.DefaultOAuthScope),
@@ -90,6 +94,9 @@ func refreshOneBuildAccount(ctx context.Context, store buildAccountAdminStore, a
 	})
 	tok, err := oauth.Refresh(ctx, acc.RefreshToken)
 	if err != nil {
+		if build.IsPermanentRefresh(err) {
+			_ = store.SetStatus(ctx, acc.ID, buildaccount.StatusExpired, "refresh permanent failure")
+		}
 		return err
 	}
 	return store.UpdateTokens(ctx, acc.ID, tok.AccessToken,
